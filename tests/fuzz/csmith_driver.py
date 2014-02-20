@@ -89,7 +89,7 @@ while 1:
   def try_js(args):
     shared.try_delete(filename + '.js')
     print '(compile)'
-    shared.check_execute([shared.EMCC, opts, fullname, '-o', filename + '.js'] + CSMITH_CFLAGS + args)
+    shared.check_execute([shared.PYTHON, shared.EMCC, opts, fullname, '-o', filename + '.js'] + CSMITH_CFLAGS + args)
     assert os.path.exists(filename + '.js')
     print '(run)'
     js = shared.run_js(filename + '.js', stderr=PIPE, engine=engine1, check_timeout=True)
@@ -115,7 +115,7 @@ while 1:
     print "EMSCRIPTEN BUG"
     notes['embug'] += 1
     fails += 1
-    shutil.copyfile(fullname, 'newfail%d.c' % fails)
+    shutil.copyfile(fullname, 'newfail%d%s' % (fails, suffix))
     continue
   #if not ok:
   #  try: # finally, try with safe heap. if that is triggered, this is nonportable code almost certainly
