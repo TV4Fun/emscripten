@@ -199,8 +199,8 @@ var LibraryJSEvents = {
 	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.metaKey, 'e.metaKey', 'i32') }}};
 	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.button, 'e.button', 'i16') }}};
 	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.buttons, 'e.buttons', 'i16') }}};
-	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.movementX, 'Browser.getMovementX(e)', 'i32') }}};
-	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.movementY, 'Browser.getMovementY(e)', 'i32') }}};
+	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.movementX, 'e.movementX || e.mozMovementX || e.webkitMovementX', 'i32') }}};
+	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.movementY, 'e.movementY || e.mozMovementY || e.webkitMovementY', 'i32') }}};
 	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.canvasX, 'e.clientX - rect.left', 'i32') }}};
 	{{{ makeSetValue('eventStruct', C_STRUCTS.EmscriptenMouseEvent.canvasY, 'e.clientY - rect.top', 'i32') }}};
     },
