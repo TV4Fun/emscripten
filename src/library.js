@@ -4584,6 +4584,7 @@ LibraryManager.library = {
 
   // Destructors for std::exception since we don't have them implemented in libcxx as we aren't using libcxxabi.
   // These are also needed for the dlmalloc tests.
+  _ZNSt9exceptionD0Ev: function() {},
   _ZNSt9exceptionD1Ev: function() {},
   _ZNSt9exceptionD2Ev: function() {},
 
@@ -8941,7 +8942,8 @@ LibraryManager.library = {
     // Process all lines:
     lines = callstack.split('\n');
     callstack = '';
-    var firefoxRe = new RegExp('\\s*(.*?)@(.*):(.*)'); // Extract components of form '       Object._main@http://server.com:4324'
+    var newFirefoxRe = new RegExp('\\s*(.*?)@(.*?):([0-9]+):([0-9]+)'); // New FF30 with column info: extract components of form '       Object._main@http://server.com:4324:12'
+    var firefoxRe = new RegExp('\\s*(.*?)@(.*):(.*)(:(.*))?'); // Old FF without column info: extract components of form '       Object._main@http://server.com:4324'
     var chromeRe = new RegExp('\\s*at (.*?) \\\((.*):(.*):(.*)\\\)'); // Extract components of form '    at Object._main (http://server.com/file.html:4324:12)'
     
     for(l in lines) {
@@ -8959,12 +8961,13 @@ LibraryManager.library = {
         lineno = parts[3];
         column = parts[4];
       } else {
-        parts = firefoxRe.exec(line);
-        if (parts && parts.length == 4) {
+        parts = newFirefoxRe.exec(line);
+        if (!parts) parts = firefoxRe.exec(line);
+        if (parts && parts.length >= 4) {
           jsSymbolName = parts[1];
           file = parts[2];
           lineno = parts[3];
-          column = 0; // Firefox doesn't carry column information. See https://bugzilla.mozilla.org/show_bug.cgi?id=762556
+          column = parts[4]|0; // Old Firefox doesn't carry column information, but in new FF30, it is present. See https://bugzilla.mozilla.org/show_bug.cgi?id=762556
         } else {
           // Was not able to extract this line for demangling/sourcemapping purposes. Output it as-is.
           callstack += line + '\n';

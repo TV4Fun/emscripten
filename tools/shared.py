@@ -270,7 +270,7 @@ if EM_POPEN_WORKAROUND and os.name == 'nt':
 
 # Expectations
 
-EXPECTED_LLVM_VERSION = (3,2)
+EXPECTED_LLVM_VERSION = (3,3)
 
 actual_clang_version = None
 
@@ -303,10 +303,26 @@ def check_fastcomp():
       print >> sys.stderr, '==========================================================================='
       print >> sys.stderr, llc_version_info,
       print >> sys.stderr, '==========================================================================='
+      logging.critical('you can fall back to the older (pre-fastcomp) compiler core, although that is not recommended, see https://github.com/kripken/emscripten/wiki/LLVM-Backend')
       return False
+
+    # look for a source tree under the llvm binary directory. if there is one, look for emscripten-version.txt files
+    d = os.path.dirname(LLVM_COMPILER)
+    while d != os.path.dirname(d):
+      if os.path.exists(os.path.join(d, 'emscripten-version.txt')):
+        llvm_version = open(os.path.join(d, 'emscripten-version.txt')).read().strip()
+        if os.path.exists(os.path.join(d, 'tools', 'clang', 'emscripten-version.txt')):
+          clang_version = open(os.path.join(d, 'tools', 'clang', 'emscripten-version.txt')).read().strip()
+        else:
+          clang_version = '?'
+        if EMSCRIPTEN_VERSION != llvm_version or EMSCRIPTEN_VERSION != clang_version:
+          logging.error('Emscripten, llvm and clang versions do not match, this is dangerous (%s, %s, %s)', EMSCRIPTEN_VERSION, llvm_version, clang_version)
+          logging.error('Make sure to use the same branch in each repo, and to be up-to-date on each. See https://github.com/kripken/emscripten/wiki/LLVM-Backend')
+        break
+      d = os.path.dirname(d)
     return True
   except Exception, e:
-    logging.warning('cound not check fastcomp: %s' % str(e))
+    logging.warning('could not check fastcomp: %s' % str(e))
     return True
 
 EXPECTED_NODE_VERSION = (0,8,0)
@@ -345,7 +361,7 @@ def find_temp_directory():
 # we re-check sanity when the settings are changed)
 # We also re-check sanity and clear the cache when the version changes
 
-EMSCRIPTEN_VERSION = '1.12.0'
+EMSCRIPTEN_VERSION = '1.12.1'
 
 def generate_sanity():
   return EMSCRIPTEN_VERSION + '|' + get_llvm_target() + '|' + LLVM_ROOT + '|' + get_clang_version()
@@ -379,7 +395,7 @@ def check_sanity(force=False):
     # some warning, mostly not fatal checks - do them even if EM_IGNORE_SANITY is on
     check_llvm_version()
     check_node_version()
-    if os.environ.get('EMCC_FAST_COMPILER') == '1':
+    if os.environ.get('EMCC_FAST_COMPILER') != '0':
       fastcomp_ok = check_fastcomp()
 
     if os.environ.get('EM_IGNORE_SANITY'):
@@ -402,7 +418,7 @@ def check_sanity(force=False):
         logging.critical('Cannot find %s, check the paths in %s' % (cmd, EM_CONFIG))
         sys.exit(1)
 
-    if os.environ.get('EMCC_FAST_COMPILER') == '1':
+    if os.environ.get('EMCC_FAST_COMPILER') != '0':
       if not fastcomp_ok:
         logging.critical('failing sanity checks due to previous fastcomp failure')
         sys.exit(1)
@@ -803,6 +819,8 @@ class Settings2(type):
 
     @classmethod
     def apply_opt_level(self, opt_level, noisy=False):
+      if opt_level == 0 and os.environ.get('EMCC_FAST_COMPILER') == '0':
+        self.attrs['ASM_JS'] = 0 # non-fastcomp has asm off in -O1
       if opt_level >= 1:
         self.attrs['ASM_JS'] = 1
         self.attrs['ASSERTIONS'] = 0
@@ -1467,7 +1485,7 @@ class Building:
   @staticmethod
   def ensure_relooper(relooper):
     if os.path.exists(relooper): return
-    if os.environ.get('EMCC_FAST_COMPILER') == '1':
+    if os.environ.get('EMCC_FAST_COMPILER') != '0':
       logging.debug('not building relooper to js, using it in c++ backend')
       return
 
@@ -1542,7 +1560,7 @@ class Building:
       text = m.groups(0)[0]
       assert text.count('(') == 1 and text.count(')') == 1, 'must have simple expressions in emscripten_jcache_printf calls, no parens'
       assert text.count('"') == 2, 'must have simple expressions in emscripten_jcache_printf calls, no strings as varargs parameters'
-      if os.environ.get('EMCC_FAST_COMPILER') == '1': # fake it in fastcomp
+      if os.environ.get('EMCC_FAST_COMPILER') != '0': # fake it in fastcomp
         return text.replace('emscripten_jcache_printf', 'printf')
       start = text.index('(')
       end = text.rindex(')')
