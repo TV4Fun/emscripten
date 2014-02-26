@@ -507,6 +507,7 @@ class T(RunnerCore): # Short name, to make it more fun to use manually on the co
   def test_asmjs_unknown_emscripten(self):
     if self.emcc_args == None: return self.skip('needs emcc')
     if not self.is_emscripten_abi(): return self.skip('asmjs-unknown-emscripten needed for asmjs-unknown-emscripten target test')
+    if os.environ.get('EMCC_FAST_COMPILER') == '0': return self.skip('fastcomp needed for asmjs-unknonw-emscripten target')
     self.do_run(open(path_from_root('tests', 'asmjs-unknown-emscripten.c')).read(), '')
 
   def test_cube2md5(self):
@@ -4542,10 +4543,20 @@ PORT: 3979
   ### 'Medium' tests
 
   def test_fannkuch(self):
+    try:
+      if self.run_name == 'slow2' or self.run_name == 'slow2asm':
+        old_target = os.environ.get('EMCC_LLVM_TARGET') or ''
+        os.environ['EMCC_LLVM_TARGET'] = "asmjs-unknown-emscripten" # testing for asm-emscripten target on non-fastcomp
       results = [ (1,0), (2,1), (3,2), (4,4), (5,7), (6,10), (7, 16), (8,22) ]
       for i, j in results:
         src = open(path_from_root('tests', 'fannkuch.cpp'), 'r').read()
         self.do_run(src, 'Pfannkuchen(%d) = %d.' % (i,j), [str(i)], no_build=i>1)
+    finally:
+      if self.run_name == 'slow2' or self.run_name == 'slow2asm':
+        if old_target:
+          os.environ['EMCC_LLVM_TARGET'] = old_target
+        else:
+          del os.environ['EMCC_LLVM_TARGET']
 
   def test_raytrace(self):
       if self.emcc_args is None: return self.skip('requires emcc')
@@ -4841,45 +4852,33 @@ def process(filename):
                  no_build=True)
 
   def test_sqlite(self):
-    try:
-      if self.run_name == 'slow2' or self.run_name == 'slow2asm':
-        old_target = os.environ.get('EMCC_LLVM_TARGET') or ''
-        os.environ['EMCC_LLVM_TARGET'] = "le32-unknown-nacl"
+    # gcc -O3 -I/home/alon/Dev/emscripten/tests/sqlite -ldl src.c
+    if self.emcc_args is None: return self.skip('Very slow without ta2, and we would also need to include dlmalloc manually without emcc')
+    if not self.is_emscripten_abi(): return self.skip('fails on x86 due to a legalization issue on llvm 3.3')
+    if Settings.QUANTUM_SIZE == 1: return self.skip('TODO FIXME')
+    self.banned_js_engines = [NODE_JS] # OOM in older node
 
-      # gcc -O3 -I/home/alon/Dev/emscripten/tests/sqlite -ldl src.c
-      if self.emcc_args is None: return self.skip('Very slow without ta2, and we would also need to include dlmalloc manually without emcc')
-      if not self.is_emscripten_abi(): return self.skip('fails on x86 due to a legalization issue on llvm 3.3')
-      if Settings.QUANTUM_SIZE == 1: return self.skip('TODO FIXME')
-      self.banned_js_engines = [NODE_JS] # OOM in older node
+    Settings.CORRECT_SIGNS = 1
+    Settings.CORRECT_OVERFLOWS = 0
+    Settings.CORRECT_ROUNDINGS = 0
+    if self.emcc_args is None: Settings.SAFE_HEAP = 0 # uses time.h to set random bytes, other stuff
+    Settings.DISABLE_EXCEPTION_CATCHING = 1
+    Settings.FAST_MEMORY = 4*1024*1024
+    Settings.EXPORTED_FUNCTIONS += ['_sqlite3_open', '_sqlite3_close', '_sqlite3_exec', '_sqlite3_free', '_callback'];
+    if Settings.ASM_JS == 1 and '-g' in self.emcc_args:
+      print "disabling inlining" # without registerize (which -g disables), we generate huge amounts of code
+      Settings.INLINING_LIMIT = 50
 
-      Settings.CORRECT_SIGNS = 1
-      Settings.CORRECT_OVERFLOWS = 0
-      Settings.CORRECT_ROUNDINGS = 0
-      if self.emcc_args is None: Settings.SAFE_HEAP = 0 # uses time.h to set random bytes, other stuff
-      Settings.DISABLE_EXCEPTION_CATCHING = 1
-      Settings.FAST_MEMORY = 4*1024*1024
-      Settings.EXPORTED_FUNCTIONS += ['_sqlite3_open', '_sqlite3_close', '_sqlite3_exec', '_sqlite3_free', '_callback'];
-      if Settings.ASM_JS == 1 and '-g' in self.emcc_args:
-        print "disabling inlining" # without registerize (which -g disables), we generate huge amounts of code
-        Settings.INLINING_LIMIT = 50
-
-      self.do_run(r'''
-                        #define SQLITE_DISABLE_LFS
-                        #define LONGDOUBLE_TYPE double
-                        #define SQLITE_INT64_TYPE long long int
-                        #define SQLITE_THREADSAFE 0
-                   ''' + open(path_from_root('tests', 'sqlite', 'sqlite3.c'), 'r').read() +
-                         open(path_from_root('tests', 'sqlite', 'benchmark.c'), 'r').read(),
-                   open(path_from_root('tests', 'sqlite', 'benchmark.txt'), 'r').read(),
-                   includes=[path_from_root('tests', 'sqlite')],
-                   force_c=True)
-
-    finally:
-      if self.run_name == 'slow2' or self.run_name == 'slow2asm':
-        if old_target:
-          os.environ['EMCC_LLVM_TARGET'] = old_target
-        else:
-          del os.environ['EMCC_LLVM_TARGET']
+    self.do_run(r'''
+                      #define SQLITE_DISABLE_LFS
+                      #define LONGDOUBLE_TYPE double
+                      #define SQLITE_INT64_TYPE long long int
+                      #define SQLITE_THREADSAFE 0
+                 ''' + open(path_from_root('tests', 'sqlite', 'sqlite3.c'), 'r').read() +
+                       open(path_from_root('tests', 'sqlite', 'benchmark.c'), 'r').read(),
+                 open(path_from_root('tests', 'sqlite', 'benchmark.txt'), 'r').read(),
+                 includes=[path_from_root('tests', 'sqlite')],
+                 force_c=True)
 
   def test_zlib(self):
     if not Settings.USE_TYPED_ARRAYS == 2: return self.skip('works in general, but cached build will be optimized and fail, so disable this')
@@ -5215,7 +5214,10 @@ def process(filename):
       for name in glob.glob(path_from_root('tests', 'fuzz', '*.c')) + glob.glob(path_from_root('tests', 'fuzz', '*.cpp')):
         #if os.path.basename(name) != '4.c': continue
         if 'newfail' in name: continue
-        if os.path.basename(name) == '18.cpp' and not os.environ.get('EMCC_FAST_COMPILER') != '0': continue # works only in fastcomp
+        if os.environ.get('EMCC_FAST_COMPILER') == '0' and os.path.basename(name) in [
+          '18.cpp', '15.c'
+        ]:
+          continue # works only in fastcomp
 
         print name
         self.do_run(open(path_from_root('tests', 'fuzz', name)).read(),
