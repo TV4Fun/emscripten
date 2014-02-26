@@ -423,7 +423,17 @@ Options that are modified or new in %s include:
 
   -v                       Turns on verbose output. This will pass
                            -v to Clang, and also enable EMCC_DEBUG
-                           to details emcc's operations
+                           to details emcc's operations.
+
+                           It will also run emscripten's internal sanity
+                           checks, checking that things like the LLVM directory
+                           path looks correct, etc. This works with or
+                           without other arguments, so it can be useful to run
+
+                              emcc -v
+
+                           if you see odd errors, as it can help diagnose
+                           things.
 
   --clear-cache            Manually clears the cache of compiled
                            emscripten system libraries (libc++,
@@ -528,7 +538,9 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
 elif len(sys.argv) == 2 and sys.argv[1] == '-v': # -v with no inputs
   print 'emcc (Emscripten GCC-like replacement + linker emulating GNU ld ) %s' % shared.EMSCRIPTEN_VERSION
-  exit(subprocess.call([shared.CLANG, '-v']))
+  code = subprocess.call([shared.CLANG, '-v'])
+  shared.check_sanity(force=True)
+  exit(code)
 
 def is_minus_s_for_emcc(newargs, i):
   assert newargs[i] == '-s'
@@ -918,6 +930,7 @@ try:
         shared.set_logging()
         logging.debug('invocation: ' + ' '.join(sys.argv))
         shared.apply_configuration() # reset config to pick up change
+        shared.check_sanity(force=True)
       newargs[i] = ''
     elif newargs[i].startswith('--shell-file'):
       check_bad_eq(newargs[i])
@@ -940,6 +953,7 @@ try:
       newargs[i] = ''
       logging.warning('clearing cache')
       shared.Cache.erase()
+      shared.check_sanity(force=True) # this is a good time for a sanity check
       sys.exit(0)
     elif newargs[i] == '--save-bc':
       check_bad_eq(newargs[i])
@@ -1177,7 +1191,10 @@ try:
       logging.warning('jcache is deprecated and not supported in fastcomp (you should not need it anyhow), disabling')
       jcache = False
 
-    fastcomp_opts = ['-pnacl-abi-simplify-preopt', '-pnacl-abi-simplify-postopt']
+    fastcomp_opts = []
+    if shared.Settings.NO_EXIT_RUNTIME:
+      fastcomp_opts += ['-emscripten-no-exit-runtime', '-globaldce']
+    fastcomp_opts += ['-pnacl-abi-simplify-preopt', '-pnacl-abi-simplify-postopt']
     if shared.Settings.DISABLE_EXCEPTION_CATCHING != 1:
       fastcomp_opts += ['-enable-emscripten-cxx-exceptions']
       if len(shared.Settings.EXCEPTION_CATCHING_WHITELIST) > 0:

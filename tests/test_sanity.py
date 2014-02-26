@@ -15,6 +15,8 @@ def wipe():
 def mtime(filename):
   return os.stat(filename).st_mtime
 
+SANITY_MESSAGE = 'Emscripten: Running sanity checks'
+
 class sanity(RunnerCore):
   @classmethod
   def setUpClass(self):
@@ -279,7 +281,6 @@ fi
       del os.environ['EM_IGNORE_SANITY']
 
   def test_emcc(self):
-    SANITY_MESSAGE = 'Emscripten: Running sanity checks'
     SANITY_FAIL_MESSAGE = 'sanity check failed to run'
 
     # emcc should check sanity if no ${EM_CONFIG}_sanity
@@ -317,6 +318,10 @@ fi
     self.assertContained(SANITY_MESSAGE, output)
     output = self.check_working(EMCC)
     self.assertNotContained(SANITY_MESSAGE, output)
+
+    # also with -v, with or without inputs
+    output = self.check_working([EMCC, '-v'], SANITY_MESSAGE)
+    output = self.check_working([EMCC, '-v', path_from_root('tests', 'hello_world.c')], SANITY_MESSAGE)
 
     # Make sure the test runner didn't do anything to the setup
     output = self.check_working(EMCC)
@@ -436,6 +441,7 @@ fi
     output = self.do([PYTHON, EMCC, '--clear-cache'])
     assert ERASING_MESSAGE in output
     assert not os.path.exists(EMCC_CACHE)
+    assert SANITY_MESSAGE in output
 
     # Changing LLVM_ROOT, even without altering .emscripten, clears the cache
     ensure_cache()
