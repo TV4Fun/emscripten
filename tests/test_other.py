@@ -2417,9 +2417,9 @@ int main(int argc, char **argv) {
 ''')
 
     for no_exit in [0, 1]:
-      for opts in [0, 1]:
+      for opts in [[], ['-O1'], ['-O2', '-g2'], ['-O2', '-g2', '--llvm-lto', '1']]:
         print no_exit, opts
-        Popen([PYTHON, EMCC, '-O' + str(opts), 'code.cpp', '-s', 'NO_EXIT_RUNTIME=' + str(no_exit)]).communicate()
+        Popen([PYTHON, EMCC] + opts + ['code.cpp', '-s', 'NO_EXIT_RUNTIME=' + str(no_exit)]).communicate()
         output = run_js(os.path.join(self.get_dir(), 'a.out.js'), stderr=PIPE, full_output=True, engine=NODE_JS)
         src = open('a.out.js').read()
         exit = 1-no_exit
@@ -2427,4 +2427,85 @@ int main(int argc, char **argv) {
         assert ('going away' in output) == exit, 'destructors should not run if no exit'
         assert ('_ZN5WasteILi2EED1Ev' in src) == exit, 'destructors should not appear if no exit'
         assert ('atexit(' in src) == exit, 'atexit should not appear or be called'
+
+  def test_os_oz(self):
+    if os.environ.get('EMCC_DEBUG'): return self.skip('cannot run in debug mode')
+    try:
+      os.environ['EMCC_DEBUG'] = '1'
+      for args, expect in [
+          (['-O1'], 'LLVM opts: -O1'),
+          (['-O2'], 'LLVM opts: -O3'),
+          (['-Os'], 'LLVM opts: -Os'),
+          (['-Oz'], 'LLVM opts: -Oz'),
+          (['-O3'], 'LLVM opts: -O3'),
+        ]:
+        print args, expect
+        output, err = Popen([PYTHON, EMCC, path_from_root('tests', 'hello_world.cpp')] + args, stdout=PIPE, stderr=PIPE).communicate()
+        self.assertContained(expect, err)
+        self.assertContained('hello, world!', run_js('a.out.js'))
+    finally:
+      del os.environ['EMCC_DEBUG']
+
+  def test_global_inits(self):
+    open('inc.h', 'w').write(r'''
+#include <stdio.h>
+
+template<int x>
+struct Waste {
+  int state;
+  Waste() : state(10) {}
+  void test(int a) {
+    printf("%d\n", a + state);
+  }
+  ~Waste() {
+    printf("going away %d\n", x);
+  }
+};
+
+Waste<3> *getMore();
+
+''')
+    open('main.cpp', 'w').write(r'''
+#include "inc.h"
+
+Waste<1> mw1;
+Waste<2> mw2;
+
+int main(int argc, char **argv) {
+  printf("argc: %d\n", argc);
+  mw1.state += argc;
+  mw2.state += argc;
+  mw1.test(5);
+  mw2.test(6);
+  getMore()->test(0);
+  return 0;
+}
+''')
+
+    open('side.cpp', 'w').write(r'''
+#include "inc.h"
+
+Waste<3> sw3;
+
+Waste<3> *getMore() {
+  return &sw3;
+}
+''')
+
+    for opts, has_global in [
+      (['-O2', '-g'], True),
+      (['-O2', '-g', '-s', 'NO_EXIT_RUNTIME=1'], False), # no-exit-runtime removes the atexits, and then globalgce can work it's magic to remove the global initializer entirely
+      (['-Os', '-g'], True),
+      (['-Os', '-g', '-s', 'NO_EXIT_RUNTIME=1'], False),
+      (['-O2', '-g', '--llvm-lto', '1'], True),
+      (['-O2', '-g', '-s', 'NO_EXIT_RUNTIME=1', '--llvm-lto', '1'], False),
+    ]:
+      print opts, has_global
+      Popen([PYTHON, EMCC, 'main.cpp', '-c'] + opts).communicate()
+      Popen([PYTHON, EMCC, 'side.cpp', '-c'] + opts).communicate()
+      Popen([PYTHON, EMCC, 'main.o', 'side.o'] + opts).communicate()
+      output = run_js(os.path.join(self.get_dir(), 'a.out.js'), stderr=PIPE, full_output=True, engine=NODE_JS)
+      src = open('a.out.js').read()
+      self.assertContained('argc: 1\n16\n17\n10\n', run_js('a.out.js'))
+      assert ('_GLOBAL_' in src) == has_global
 
