@@ -780,6 +780,8 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
   table_sizes = {}
   for k, v in metadata['tables'].iteritems():
     table_sizes[k] = str(v.count(',')) # undercounts by one, but that is what we want
+    #if settings['ASSERTIONS'] >= 2 and table_sizes[k] == 0:
+    #  print >> sys.stderr, 'warning: no function pointers with signature ' + k + ', but there is a call, which will abort if it occurs (this can result from undefined behavior, check for compiler warnings on your source files and consider -Werror)'
   funcs = re.sub(r"#FM_(\w+)#", lambda m: table_sizes[m.groups(0)[0]], funcs)
 
   # fix +float into float.0, if not running js opts
@@ -997,6 +999,7 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
     if settings['SAFE_HEAP']: basic_funcs += ['SAFE_HEAP_LOAD', 'SAFE_HEAP_STORE']
     if settings['CHECK_HEAP_ALIGN']: basic_funcs += ['CHECK_ALIGN_2', 'CHECK_ALIGN_4', 'CHECK_ALIGN_8']
     if settings['ASSERTIONS']:
+      if settings['ASSERTIONS'] >= 2: import difflib
       for sig in last_forwarded_json['Functions']['tables'].iterkeys():
         basic_funcs += ['nullFunc_' + sig]
         if settings['ASSERTIONS'] <= 1:
@@ -1006,11 +1009,29 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
           pointer = ' \'" + x + "\' '
           asm_setup += '\nvar debug_table_' + sig + ' = ' + json.dumps(debug_tables[sig]) + ';'
           extra = ' Module["printErr"]("This pointer might make sense in another type signature: '
-          for other in last_forwarded_json['Functions']['tables'].iterkeys():
+          # sort signatures, attempting to show most likely related ones first
+          sigs = last_forwarded_json['Functions']['tables'].keys()
+          def keyfunc(other):
+            ret = 0
+            minlen = min(len(other), len(sig))
+            maxlen = min(len(other), len(sig))
+            if other.startswith(sig) or sig.startswith(other): ret -= 1000 # prioritize prefixes, could be dropped params
+            ret -= 133*difflib.SequenceMatcher(a=other, b=sig).ratio() # prioritize on diff similarity
+            ret += 15*abs(len(other) - len(sig))/float(maxlen) # deprioritize the bigger the length difference is
+            for i in range(minlen):
+              if other[i] == sig[i]: ret -= 5/float(maxlen) # prioritize on identically-placed params
+            ret += 20*len(other) # deprioritize on length
+            return ret
+          sigs.sort(key=keyfunc)
+          for other in sigs:
             if other != sig:
               extra += other + ': " + debug_table_' + other + '[x] + "  '
           extra += '"); '
-        asm_setup += '\nfunction nullFunc_' + sig + '(x) { Module["printErr"]("Invalid function pointer' + pointer + 'called with signature \'' + sig + '\'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an different type, which will fail?"); ' + extra + ' abort(x) }\n'
+        asm_setup += '\nfunction nullFunc_' + sig + '(x) { Module["printErr"]("Invalid function pointer' + pointer + 'called with signature \'' + sig + '\'. ' + \
+                     'Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? ' + \
+                     'Or calling a function with an incorrect type, which will fail? ' + \
+                     '(it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this)' + \
+                     '"); ' + extra + ' abort(x) }\n'
 
     basic_vars = ['STACKTOP', 'STACK_MAX', 'tempDoublePtr', 'ABORT']
     basic_float_vars = ['NaN', 'Infinity']

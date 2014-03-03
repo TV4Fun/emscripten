@@ -540,6 +540,7 @@ f.close()
     '''
     open('src.c', 'w').write(src)
     def test(args, expected, err_expected=None):
+      print args, expected, err_expected
       out, err = Popen([PYTHON, EMCC, 'src.c'] + args, stderr=PIPE).communicate()
       if err_expected: self.assertContained(err_expected, err)
       self.assertContained(expected, run_js(self.in_dir('a.out.js'), stderr=PIPE, full_output=True))
@@ -555,11 +556,11 @@ f.close()
            'Incompatible function pointer casts are very dangerous with ASM_JS=1, you should investigate and correct these']) # asm, so failure
     else:
       # fastcomp. all asm, so it can't just work with wrong sigs. but, ASSERTIONS=2 gives much better info to debug
-      test(['-O1'], 'abort') # no useful info
-      test(['-O1', '-s', 'ASSERTIONS=1'], '''Invalid function pointer called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an different type, which will fail?
+      test(['-O1'], 'If this abort() is unexpected, build with -s ASSERTIONS=1 which can give more information.') # no useful info, but does mention ASSERTIONS
+      test(['-O1', '-s', 'ASSERTIONS=1'], '''Invalid function pointer called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an incorrect type, which will fail? (it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this)
 Build with ASSERTIONS=2 for more info.
 ''') # some useful text
-      test(['-O1', '-s', 'ASSERTIONS=2'], '''Invalid function pointer '1' called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an different type, which will fail?
+      test(['-O1', '-s', 'ASSERTIONS=2'], '''Invalid function pointer '1' called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an incorrect type, which will fail? (it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this)
 This pointer might make sense in another type signature: i: _my_func  
 ''') # actually useful identity of the bad pointer, with comparisons to what it would be in other types/tables
 
@@ -2508,4 +2509,29 @@ Waste<3> *getMore() {
       src = open('a.out.js').read()
       self.assertContained('argc: 1\n16\n17\n10\n', run_js('a.out.js'))
       assert ('_GLOBAL_' in src) == has_global
+
+  def test_implicit_func(self):
+    open('src.c', 'w').write(r'''
+#include <stdio.h>
+int main()
+{
+    printf("hello %d\n", strnlen("waka", 2)); // Implicit declaration, no header, for strnlen
+    int (*my_strnlen)(char*, ...) = strnlen;
+    printf("hello %d\n", my_strnlen("shaka", 2));
+    return 0;
+}
+''')
+
+    for opts, expected, compile_expected in [
+      ([], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], []),
+      (['-s', 'ASSERTIONS=2'], ['abort()', 'This pointer might make sense in another type signature: ii: _strnlen'], []),
+      (['-O1'], ['hello 2\nhello 5\n'], []), # invalid output - second arg is sent as varargs, but needs to be int. llvm optimizer avoided the crash silently, caused undefined behavior... at least people can debug this by running an -O0 build.
+    ]:
+      print opts, expected
+      stdout, stderr = Popen([PYTHON, EMCC, 'src.c'] + opts, stderr=PIPE).communicate()
+      output = run_js(os.path.join(self.get_dir(), 'a.out.js'), stderr=PIPE, full_output=True)
+      for e in expected:
+        self.assertContained(e, output)
+      for ce in compile_expected + ['''warning: implicit declaration of function 'strnlen' is invalid in C99''', '''warning: incompatible pointer types''']:
+        self.assertContained(ce, stderr)
 
