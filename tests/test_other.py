@@ -195,7 +195,6 @@ Options that are modified or new in %s include:
         (['-O2', '-g3'], lambda generated: 'var b=0' not in generated and 'var b = 0' not in generated and 'function _main' in generated, 'registerize is cancelled by -g3'),
         #(['-O2', '-g4'], lambda generated: 'var b=0' not in generated and 'var b = 0' not in generated and 'function _main' in generated, 'same as -g3 for now'),
         (['-s', 'INLINING_LIMIT=0'], lambda generated: 'function _dump' in generated, 'no inlining without opts'),
-        (['-Os', '--llvm-lto', '1', '-s', 'ASM_JS=0', '-g2'], lambda generated: 'function _dump' in generated, '-Os disables inlining'),
         (['-s', 'USE_TYPED_ARRAYS=0'], lambda generated: 'new Int32Array' not in generated, 'disable typed arrays'),
         (['-s', 'USE_TYPED_ARRAYS=1'], lambda generated: 'IHEAPU = ' in generated, 'typed arrays 1 selected'),
         ([], lambda generated: 'Module["_dump"]' not in generated, 'dump is not exported by default'),
@@ -560,8 +559,8 @@ f.close()
       test(['-O1', '-s', 'ASSERTIONS=1'], '''Invalid function pointer called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an incorrect type, which will fail? (it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this)
 Build with ASSERTIONS=2 for more info.
 ''') # some useful text
-      test(['-O1', '-s', 'ASSERTIONS=2'], '''Invalid function pointer '1' called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an incorrect type, which will fail? (it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this)
-This pointer might make sense in another type signature: i: _my_func  
+      test(['-O1', '-s', 'ASSERTIONS=2'], '''Invalid function pointer '0' called with signature 'v'. Perhaps this is an invalid value (e.g. caused by calling a virtual method on a NULL pointer)? Or calling a function with an incorrect type, which will fail? (it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this)
+This pointer might make sense in another type signature: i: 0  
 ''') # actually useful identity of the bad pointer, with comparisons to what it would be in other types/tables
 
   def test_l_link(self):
@@ -2524,7 +2523,7 @@ int main()
 
     for opts, expected, compile_expected in [
       ([], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], []),
-      (['-s', 'ASSERTIONS=2'], ['abort()', 'This pointer might make sense in another type signature: ii: _strnlen'], []),
+      (['-s', 'ASSERTIONS=2'], ['abort()', 'This pointer might make sense in another type signature'], []),
       (['-O1'], ['hello 2\nhello 5\n'], []), # invalid output - second arg is sent as varargs, but needs to be int. llvm optimizer avoided the crash silently, caused undefined behavior... at least people can debug this by running an -O0 build.
     ]:
       print opts, expected
