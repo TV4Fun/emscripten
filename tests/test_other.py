@@ -114,8 +114,6 @@ Options that are modified or new in %s include:
         os.chdir(self.get_dir())
       self.clear()
 
-      # dlmalloc. dlmalloc is special in that it is the only part of libc that is (1) hard to write well, and
-      # very speed-sensitive. So we do not implement it in JS in library.js, instead we compile it from source
       for source, has_malloc in [('hello_world' + suffix, False), ('hello_malloc.cpp', True)]:
         print source, has_malloc
         self.clear()
@@ -920,9 +918,9 @@ This pointer might make sense in another type signature: i: 0
       ([], {
          100: (190, 500),
          250: (200, 600),
-         500: (250, 700),
+         500: (200, 700),
         1000: (230, 1000),
-        2000: (380, 2000),
+        2000: (300, 2000),
         5000: (500, 5000),
            0: (1500, 5000)
       }),
@@ -2521,16 +2519,45 @@ int main()
 }
 ''')
 
+    IMPLICIT_WARNING = '''warning: implicit declaration of function 'strnlen' is invalid in C99'''
+    IMPLICIT_ERROR = '''error: implicit declaration of function 'strnlen' is invalid in C99'''
+
     for opts, expected, compile_expected in [
-      ([], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], []),
-      (['-s', 'ASSERTIONS=2'], ['abort()', 'This pointer might make sense in another type signature'], []),
-      (['-O1'], ['hello 2\nhello 5\n'], []), # invalid output - second arg is sent as varargs, but needs to be int. llvm optimizer avoided the crash silently, caused undefined behavior... at least people can debug this by running an -O0 build.
+      ([], None, [IMPLICIT_ERROR]),
+      (['-Wno-error=implicit-function-declaration'], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], [IMPLICIT_WARNING]), # turn error into warning
+      (['-Wno-implicit-function-declaration'], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], []), # turn error into nothing at all
+      (['-Wno-error=implicit-function-declaration', '-s', 'ASSERTIONS=2'], ['abort()', 'This pointer might make sense in another type signature'], []),
+      (['-Wno-error=implicit-function-declaration', '-O1'], ['hello 2\nhello 5\n'], []), # invalid output - second arg is sent as varargs, but needs to be int. llvm optimizer avoided the crash silently, caused undefined behavior... at least people can debug this by running an -O0 build.
     ]:
       print opts, expected
       stdout, stderr = Popen([PYTHON, EMCC, 'src.c'] + opts, stderr=PIPE).communicate()
-      output = run_js(os.path.join(self.get_dir(), 'a.out.js'), stderr=PIPE, full_output=True)
-      for e in expected:
-        self.assertContained(e, output)
-      for ce in compile_expected + ['''warning: implicit declaration of function 'strnlen' is invalid in C99''', '''warning: incompatible pointer types''']:
+      for ce in compile_expected + ['''warning: incompatible pointer types''']:
         self.assertContained(ce, stderr)
+      if expected is None:
+        assert not os.path.exists('a.out.js')
+      else:
+        output = run_js(os.path.join(self.get_dir(), 'a.out.js'), stderr=PIPE, full_output=True)
+        for e in expected:
+          self.assertContained(e, output)
+
+  def test_incorrect_static_call(self):
+    for opts in [0, 1]:
+      for asserts in [0, 1]:
+        extra = []
+        if opts != 1-asserts: extra = ['-s', 'ASSERTIONS=' + str(asserts)]
+        cmd = [PYTHON, EMCC, path_from_root('tests', 'cases', 'sillyfuncast2_noasm.ll'), '-O' + str(opts)] + extra
+        print cmd
+        stdout, stderr = Popen(cmd, stderr=PIPE).communicate()
+        assert ('''unexpected number of arguments 3 in call to 'doit', should be 2''' in stderr) == asserts, stderr
+        assert ('''unexpected return type i32 in call to 'doit', should be void''' in stderr) == asserts, stderr
+        assert ('''unexpected argument type float at index 1 in call to 'doit', should be i32''' in stderr) == asserts, stderr
+
+  def test_llvm_lit(self):
+    llvm_src = LLVM_ROOT
+    while not os.path.exists(os.path.join(llvm_src, 'emscripten-version.txt')): llvm_src = os.path.dirname(llvm_src)
+    cmd = [os.path.join(LLVM_ROOT, 'llvm-lit'), os.path.join(llvm_src, 'test', 'CodeGen', 'JS')]
+    print cmd
+    p = Popen(cmd)
+    p.communicate()
+    assert p.returncode == 0, 'LLVM tests must pass with exit code 0'
 

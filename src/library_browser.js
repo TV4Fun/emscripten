@@ -1,7 +1,6 @@
 //"use strict";
 
 // Utilities for browser environments
-
 mergeInto(LibraryManager.library, {
   $Browser__deps: ['$PATH'],
   $Browser__postset: 'Module["requestFullScreen"] = function Module_requestFullScreen(lockPointer, resizeCanvas) { Browser.requestFullScreen(lockPointer, resizeCanvas) };\n' + // exports
@@ -349,9 +348,9 @@ mergeInto(LibraryManager.library, {
       if (typeof Browser.resizeCanvas === 'undefined') Browser.resizeCanvas = false;
 
       var canvas = Module['canvas'];
-      var canvasContainer = canvas.parentNode;
       function fullScreenChange() {
         Browser.isFullScreen = false;
+        var canvasContainer = canvas.parentNode;
         if ((document['webkitFullScreenElement'] || document['webkitFullscreenElement'] ||
              document['mozFullScreenElement'] || document['mozFullscreenElement'] ||
              document['fullScreenElement'] || document['fullscreenElement'] ||
@@ -370,7 +369,6 @@ mergeInto(LibraryManager.library, {
         } else {
           
           // remove the full screen specific parent of the canvas again to restore the HTML structure from before going full screen
-          var canvasContainer = canvas.parentNode;
           canvasContainer.parentNode.insertBefore(canvas, canvasContainer);
           canvasContainer.parentNode.removeChild(canvasContainer);
           
@@ -1063,8 +1061,11 @@ mergeInto(LibraryManager.library, {
       var callbackId = msg.data['callbackId'];
       var callbackInfo = info.callbacks[callbackId];
       if (!callbackInfo) return; // no callback or callback removed meanwhile
-      info.awaited--;
-      info.callbacks[callbackId] = null; // TODO: reuse callbackIds, compress this
+      // Don't trash our callback state if we expect additional calls.
+      if (msg.data['finalResponse']) {
+        info.awaited--;
+        info.callbacks[callbackId] = null; // TODO: reuse callbackIds, compress this
+      }
       var data = msg.data['data'];
       if (data) {
         if (!data.byteLength) data = new Uint8Array(data);
@@ -1111,12 +1112,23 @@ mergeInto(LibraryManager.library, {
     });
   },
 
+  emscripten_worker_respond_provisionally: function(data, size) {
+    if (!inWorkerCall) throw 'not in worker call!';
+    if (workerResponded) throw 'already responded with final response!';
+    postMessage({
+      'callbackId': workerCallbackId,
+      'finalResponse': false,
+      'data': data ? new Uint8Array({{{ makeHEAPView('U8', 'data', 'data + size') }}}) : 0 // XXX copy to a new typed array as a workaround for chrome bug 169705
+    });
+  },
+
   emscripten_worker_respond: function(data, size) {
     if (!inWorkerCall) throw 'not in worker call!';
-    if (workerResponded) throw 'already responded!';
+    if (workerResponded) throw 'already responded with final response!';
     workerResponded = true;
     postMessage({
       'callbackId': workerCallbackId,
+      'finalResponse': true,
       'data': data ? new Uint8Array({{{ makeHEAPView('U8', 'data', 'data + size') }}}) : 0 // XXX copy to a new typed array as a workaround for chrome bug 169705
     });
   },

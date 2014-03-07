@@ -316,8 +316,10 @@ def check_fastcomp():
         llvm_version = open(os.path.join(d, 'emscripten-version.txt')).read().strip()
         if os.path.exists(os.path.join(d, 'tools', 'clang', 'emscripten-version.txt')):
           clang_version = open(os.path.join(d, 'tools', 'clang', 'emscripten-version.txt')).read().strip()
+        elif os.path.exists(os.path.join(d, 'tools', 'clang')):
+          clang_version = '?' # Looks like the LLVM compiler tree has an old checkout from the time before it contained a version.txt: Should update!
         else:
-          clang_version = '?'
+          clang_version = llvm_version # This LLVM compiler tree does not have a tools/clang, so it's probably an out-of-source build directory. No need for separate versioning.
         if EMSCRIPTEN_VERSION != llvm_version or EMSCRIPTEN_VERSION != clang_version:
           logging.error('Emscripten, llvm and clang versions do not match, this is dangerous (%s, %s, %s)', EMSCRIPTEN_VERSION, llvm_version, clang_version)
           logging.error('Make sure to use the same branch in each repo, and to be up-to-date on each. See https://github.com/kripken/emscripten/wiki/LLVM-Backend')
@@ -661,6 +663,15 @@ if LLVM_TARGET != 'asmjs-unknown-emscripten':
   COMPILER_STANDARDIZATION_OPTS += ['-D__IEEE_LITTLE_ENDIAN']
   COMPILER_OPTS += ['-DEMSCRIPTEN', '-D__EMSCRIPTEN__', '-fno-math-errno',
                     '-U__native_client__', '-U__pnacl__', '-U__ELF__']
+
+# Changes to default clang behavior
+if LLVM_TARGET == 'asmjs-unknown-emscripten' or LLVM_TARGET == 'le32-unknown-nacl':
+  # Implicit functions can cause horribly confusing asm.js function pointer type errors, see #2175
+  # If your codebase really needs them - very unrecommended! - you can disable the error with
+  #   -Wno-error=implicit-function-declaration
+  # or disable even a warning about it with
+  #   -Wno-implicit-function-declaration
+  COMPILER_OPTS += ['-Werror=implicit-function-declaration']
 
 USE_EMSDK = not os.environ.get('EMMAKEN_NO_SDK')
 

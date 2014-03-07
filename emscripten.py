@@ -746,6 +746,9 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
     backend_args += ['-emscripten-warn-unaligned']
   if settings['RESERVED_FUNCTION_POINTERS'] > 0:
     backend_args += ['-emscripten-reserved-function-pointers=%d' % settings['RESERVED_FUNCTION_POINTERS']]
+  if settings['ASSERTIONS'] > 0:
+    backend_args += ['-emscripten-assertions=%d' % settings['ASSERTIONS']]
+  backend_args += ['-O' + str(settings['OPT_LEVEL'])]
   if DEBUG:
     logging.debug('emscript: llvm backend: ' + ' '.join(backend_args))
     t = time.time()
@@ -821,6 +824,8 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
   ) + map(lambda x: x[1:], metadata['externs'])
   if metadata['simd']:
     settings['SIMD'] = 1
+  if not metadata['canValidate'] and settings['ASM_JS'] != 2:
+    logging.warning('disabling asm.js validation due to use of non-supported features')
     settings['ASM_JS'] = 2
 
   # Save settings to a file to work around v8 issue 1579
