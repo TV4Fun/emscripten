@@ -723,7 +723,7 @@ mergeInto(LibraryManager.library, {
 
     // PROGRESS
     http.onprogress = function http_onprogress(e) {
-      if (e.lengthComputable)
+      if (e.lengthComputable || (e.lengthComputable === 'undefined' && e.totalSize != 0))
       {
         var percentComplete = (e.position / e.totalSize)*100;
         if (onprogress) Runtime.dynCall('vii', onprogress, [arg, percentComplete]);
@@ -776,7 +776,7 @@ mergeInto(LibraryManager.library, {
 
     // PROGRESS
     http.onprogress = function http_onprogress(e) {
-      if (onprogress) Runtime.dynCall('viii', onprogress, [arg, e.loaded, e.lengthComputable ? e.total : 0]);
+      if (onprogress) Runtime.dynCall('viii', onprogress, [arg, e.loaded, e.lengthComputable || e.lengthComputable === 'undefined' ? e.total : 0]);
     };
 
     // Useful because the browser can limit the number of redirection
