@@ -342,7 +342,7 @@ void emscripten_async_wget2(const char* url, const char* file,  const char* requ
  * If any error occurred 'onerror' will called with the HTTP status code
    and a string with the status description.
  */
-    void emscripten_async_wget2_data(const char* url, const char* requesttype, const char* param, void *arg, bool free, void (*onload)(void*, void*, unsigned), void (*onerror)(void*, int, const char*), void (*onprogress)(void*, int, int));
+void emscripten_async_wget2_data(const char* url, const char* requesttype, const char* param, void *arg, int free, void (*onload)(void*, void*, unsigned), void (*onerror)(void*, int, const char*), void (*onprogress)(void*, int, int));
 
 /*
  * Prepare a file in asynchronous way. This does just the
