@@ -1034,9 +1034,6 @@ try:
 
   if DEBUG: start_time = time.time() # done after parsing arguments, which might affect debug state
 
-  if closure:
-    assert os.path.exists(shared.CLOSURE_COMPILER), logging.error('fatal: Closure compiler (%s) does not exist', shared.CLOSURE_COMPILER)
-
   for i in range(len(newargs)):
     if newargs[i] == '-s':
       if is_minus_s_for_emcc(newargs, i):
@@ -1190,7 +1187,7 @@ try:
     shared.Settings.ASM_JS = 1 if opt_level > 0 else 2
     try:
       assert shared.Settings.UNALIGNED_MEMORY == 0, 'forced unaligned memory not supported in fastcomp'
-      assert shared.Settings.CHECK_HEAP_ALIGN == 0, 'check heap align not supported in fastcomp yet'
+      assert shared.Settings.CHECK_HEAP_ALIGN == 0, 'check heap align not supported in fastcomp - use SAFE_HEAP instead'
       assert shared.Settings.SAFE_DYNCALLS == 0, 'safe dyncalls not supported in fastcomp'
       assert shared.Settings.ASM_HEAP_LOG == 0, 'asm heap log not supported in fastcomp'
       assert shared.Settings.LABEL_DEBUG == 0, 'label debug not supported in fastcomp'
@@ -1251,6 +1248,10 @@ try:
   if debug_level > 1 and closure:
     logging.warning('disabling closure because debug info was requested')
     closure = False
+
+  if closure:
+    shared.Settings.CLOSURE_COMPILER = 1
+    assert os.path.exists(shared.CLOSURE_COMPILER), logging.error('fatal: Closure compiler (%s) does not exist', shared.CLOSURE_COMPILER)
 
   assert shared.LLVM_TARGET in shared.COMPILER_OPTS
   if shared.LLVM_TARGET == 'i386-pc-linux-gnu':
@@ -1497,7 +1498,7 @@ try:
 
   # Prepare .ll for Emscripten
   if not LEAVE_INPUTS_RAW:
-    if save_bc:
+    if save_bc and not fastcomp:
       final = shared.Building.llvm_dis(final, final + '.ll')
   else:
     assert len(input_files) == 1

@@ -187,16 +187,16 @@ function SAFE_HEAP_STORE(dest, value, bytes, isFloat) {
   Module.print('SAFE_HEAP store: ' + [dest, value, bytes, isFloat]);
 #endif
   assert(dest > 0, 'segmentation fault');
-  assert(dest % bytes === 0);
-  assert(dest < Math.max(DYNAMICTOP, STATICTOP));
+  assert(dest % bytes === 0, 'alignment error');
+  assert(dest < Math.max(DYNAMICTOP, STATICTOP), 'segmentation fault (high)');
   assert(DYNAMICTOP <= TOTAL_MEMORY);
   setValue(dest, value, getSafeHeapType(bytes, isFloat), 1);
 }
 
 function SAFE_HEAP_LOAD(dest, bytes, isFloat, unsigned) {
   assert(dest > 0, 'segmentation fault');
-  assert(dest % bytes === 0);
-  assert(dest < Math.max(DYNAMICTOP, STATICTOP));
+  assert(dest % bytes === 0, 'alignment error');
+  assert(dest < Math.max(DYNAMICTOP, STATICTOP), 'segmentation fault (high)');
   assert(DYNAMICTOP <= TOTAL_MEMORY);
   var type = getSafeHeapType(bytes, isFloat);
   var ret = getValue(dest, type, 1);
@@ -805,7 +805,14 @@ function demangle(func) {
       }
     }
     if (!allowVoid && list.length === 1 && list[0] === 'void') list = []; // avoid (void)
-    return rawList ? list : ret + flushList();
+    if (rawList) {
+      if (ret) {
+        list.push(ret + '?');
+      }
+      return list;
+    } else {
+      return ret + flushList();
+    }
   }
   try {
     // Special-case the entry point, since its name differs from other name mangling.
