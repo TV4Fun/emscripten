@@ -279,6 +279,28 @@ function clearEmptyNodes(list) {
   }
 }
 
+function filterEmptyNodes(list) { // creates a copy and returns it
+  return list.filter(function(node) {
+    return !(isEmptyNode(node) || (node[0] === 'stat' && isEmptyNode(node[1])));
+  });
+}
+
+function removeEmptySubNodes(node) {
+  if (node[0] === 'defun') {
+    node[3] = filterEmptyNodes(node[3]);
+  } else if (node[0] === 'block' && node[1]) {
+    node[1] = filterEmptyNodes(node[1]);
+  }
+/*
+  var stats = getStatements(node);
+  if (stats) clearEmptyNodes(stats);
+*/
+}
+
+function removeAllEmptySubNodes(ast) {
+  traverse(ast, removeEmptySubNodes);
+}
+
 // Passes
 
 // Dump the AST. Useful for debugging. For example,
@@ -1281,6 +1303,7 @@ function vacuum(ast) {
   traverseGeneratedFunctions(ast, function(node) {
     vacuumInternal(node);
     simplifyNotComps(node);
+    removeEmptySubNodes(node);
   });
 }
 
@@ -1687,6 +1710,11 @@ function denormalizeAsm(func, data) {
       if (!isEmptyNode(stats[i])) break;
     }
   }
+  // calculate variable definitions
+  var varDefs = [];
+  for (var v in data.vars) {
+    varDefs.push(makeAsmVarDef(v, data.vars[v]));
+  }
   // each param needs a line; reuse emptyNodes as much as we can
   var numParams = 0;
   for (var i in data.params) numParams++;
@@ -1695,26 +1723,21 @@ function denormalizeAsm(func, data) {
     if (!isEmptyNode(stats[emptyNodes])) break;
     emptyNodes++;
   }
-  var neededEmptyNodes = numParams + 1; // params plus one big var
+  var neededEmptyNodes = numParams + (varDefs.length ? 1 : 0); // params plus one big var if there are vars
   if (neededEmptyNodes > emptyNodes) {
     var args = [0, 0];
     for (var i = 0; i < neededEmptyNodes - emptyNodes; i++) args[i+2] = 0;
     stats.splice.apply(stats, args);
+  } else if (neededEmptyNodes < emptyNodes) {
+    stats.splice(0, emptyNodes - neededEmptyNodes);
   }
   // add param coercions
   var next = 0;
   func[2].forEach(function(param) {
     stats[next++] = ['stat', ['assign', true, ['name', param], makeAsmCoercion(['name', param], data.params[param])]];
   });
-  // add variable definitions
-  var varDefs = [];
-  for (var v in data.vars) {
-    varDefs.push(makeAsmVarDef(v, data.vars[v]));
-  }
   if (varDefs.length) {
     stats[next] = ['var', varDefs];
-  } else {
-    stats[next] = emptyNode();
   }
   if (data.inlines.length > 0) {
     var i = 0;
@@ -3877,6 +3900,8 @@ function eliminate(ast, memSafe) {
     }
     new ExpressionOptimizer(ast).run();
   }
+
+  removeAllEmptySubNodes(ast);
 }
 
 function eliminateMemSafe(ast) {
@@ -4247,6 +4272,8 @@ function aggressiveVariableEliminationInternal(func, asmData) {
       }
     }
   });
+
+  removeAllEmptySubNodes(func);
 }
 
 function aggressiveVariableElimination(ast) {
@@ -5281,7 +5308,15 @@ if (extraInfoStart > 0) extraInfo = JSON.parse(src.substr(extraInfoStart + 14));
 
 
 arguments_.slice(1).forEach(function(arg) {
+  //traverse(ast, function(node) {
+  //  if (node[0] === 'defun' && node[1] === 'copyTempFloat') printErr('pre ' + JSON.stringify(node, null, ' '));
+  //});
   passes[arg](ast);
+  //var func;
+  //traverse(ast, function(node) {
+  //  if (node[0] === 'defun') func = node;
+  //  if (isEmptyNode(node)) throw 'empty node after ' + arg + ', in ' + func[1];
+  //});
 });
 if (asm && last) {
   asmLastOpts(ast); // TODO: move out of last, to make last faster when done later (as in side modules)
