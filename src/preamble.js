@@ -567,6 +567,7 @@ Module['allocate'] = allocate;
 function Pointer_stringify(ptr, /* optional */ length) {
   // TODO: use TextDecoder
   // Find the length, and check for UTF while doing so
+  if (ptr instanceof String) return ptr;
   var hasUtf = false;
   var t;
   var i = 0;
