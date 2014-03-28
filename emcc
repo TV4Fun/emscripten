@@ -50,7 +50,7 @@ emcc can be influenced by a few environment variables:
 import os, sys, shutil, tempfile, subprocess, shlex, time, re, logging
 from subprocess import PIPE
 from tools import shared, jsrun, system_libs
-from tools.shared import Compression, execute, suffix, unsuffixed, unsuffixed_basename, WINDOWS
+from tools.shared import Compression, execute, suffix, unsuffixed, unsuffixed_basename, WINDOWS, safe_move
 from tools.response_file import read_response_file
 
 # endings = dot + a suffix, safe to test by  filename.endswith(endings)
@@ -95,7 +95,8 @@ AUTODEBUG = os.environ.get('EMCC_AUTODEBUG') # If set to 1, we will run the auto
                                              # dlmalloc makes it hard to compare native and js builds
 EMCC_CFLAGS = os.environ.get('EMCC_CFLAGS') # Additional compiler flags that we treat as if they were passed to us on the commandline
 
-logging.debug('invocation: ' + ' '.join(sys.argv) + (' + ' + EMCC_CFLAGS if EMCC_CFLAGS else ''))
+if DEBUG: logging.warning('invocation: ' + ' '.join(sys.argv) + (' + ' + EMCC_CFLAGS if EMCC_CFLAGS else ''))
+
 if EMCC_CFLAGS: sys.argv.append(EMCC_CFLAGS)
 
 if DEBUG and LEAVE_INPUTS_RAW: logging.warning('leaving inputs raw')
@@ -241,6 +242,14 @@ Options that are modified or new in %s include:
                            also enable optimizations that affect
                            performance and otherwise might not be
                            performed in -g2.
+
+  --emit-symbol-map        Save a map file between the minified
+                           global names and the original function names.
+                           This allows you to reconstruct meaningful
+                           stack traces, for example. (This is only
+                           relevant when minifying global names, which
+                           happens in -O2 and above, and when no -g
+                           option to prevent minification was specified.)
 
   --typed-arrays <mode>    0: No typed arrays
                            1: Parallel typed arrays
@@ -778,6 +787,7 @@ try:
   opt_level = 0
   debug_level = 0
   profiling = False
+  emit_symbol_map = False
   js_opts = None
   llvm_opts = None
   llvm_lto = None
@@ -901,6 +911,9 @@ try:
     elif newargs[i] == '-profiling':
       debug_level = 2
       profiling = True
+      newargs[i] = ''
+    elif newargs[i] == '--emit-symbol-map':
+      emit_symbol_map = True
       newargs[i] = ''
     elif newargs[i] == '--bind':
       bind = True
@@ -1135,6 +1148,7 @@ try:
     assert has_source_inputs or has_header_inputs, 'Must have source code or header inputs to use -c'
     target = target_basename + '.o'
     final_suffix = 'o'
+  final_ending = ('.' + final_suffix) if len(final_suffix) > 0 else ''
 
   # Find library files
   for lib in libs:
@@ -1340,13 +1354,25 @@ try:
     execute([call] + args) # let compiler frontend print directly, so colors are saved (PIPE kills that)
     sys.exit(1)
 
+  def get_bitcode_file(input_file):
+    if final_suffix not in JS_CONTAINING_SUFFIXES:
+      # no need for a temp file, just emit to the right place
+      if len(input_files) == 1:
+        # can just emit directly to the target
+        if specified_target:
+          if specified_target.endswith('/') or specified_target.endswith('\\') or os.path.isdir(specified_target):
+            return os.path.join(specified_target, os.path.basename(unsuffixed(input_file))) + default_object_extension
+          return specified_target
+        return unsuffixed(input_file) + final_ending
+      return unsuffixed(input_file) + default_object_extension
+    return in_temp(unsuffixed(uniquename(input_file)) + default_object_extension)
+
   # First, generate LLVM bitcode. For each input file, we get base.o with bitcode
   for input_file in input_files:
     file_ending = filename_type_ending(input_file)
     if file_ending.endswith(SOURCE_ENDINGS):
       logging.debug('compiling source file: ' + input_file)
-      input_file = shared.Building.preprocess(input_file, in_temp(uniquename(input_file)))
-      output_file = in_temp(unsuffixed(uniquename(input_file)) + '.o')
+      output_file = get_bitcode_file(input_file)
       temp_files.append(output_file)
       args = newargs + ['-emit-llvm', '-c', input_file, '-o', output_file]
       if file_ending.endswith(CXX_ENDINGS):
@@ -1398,26 +1424,19 @@ try:
   if final_suffix not in JS_CONTAINING_SUFFIXES:
     if not specified_target:
       for input_file in input_files:
-        shutil.move(in_temp(unsuffixed(uniquename(input_file)) + '.o'), unsuffixed_basename(input_file) + '.' + final_suffix)
+        safe_move(get_bitcode_file(input_file), unsuffixed_basename(input_file) + final_ending)
     else:
       if len(input_files) == 1:
-        temp_output_base = in_temp(unsuffixed(uniquename(input_files[0])))
-        if specified_target.endswith('/') or specified_target.endswith('\\') or os.path.isdir(specified_target): # User passed '-o <directory' as the location to output to.
-          obj_output_name = os.path.join(specified_target, os.path.splitext(os.path.basename(input_file))[0] + default_object_extension)
-          logging.debug('User specified -o <directoryname> as the location of the output. Generating output file ' + obj_output_name)
-          try:
-            shutil.move(temp_output_base + '.o', obj_output_name)
-          except IOError, e:
-            logging.error('Could not write to output file ' + obj_output_name + '. Perhaps the output directory does not exist?')
-            exit(1)
-        else: # User passed '-o <filename>' as the location to output to.
-          shutil.move(temp_output_base + '.o', specified_target)
+        temp_output_base = unsuffixed(get_bitcode_file(input_files[0]))
+        if not specified_target:
+          safe_move(get_bitcode_file(input_file), unsuffixed_basename(input_file) + final_ending)
         if os.path.exists(temp_output_base + '.d'):
           # There was a .d file generated, from -MD or -MMD and friends, save a copy of it to where the output resides,
           # adjusting the target name away from the temporary file name to the specified target.
           # It will be deleted with the rest of the temporary directory.
           deps = open(temp_output_base + '.d').read()
-          deps = deps.replace(temp_output_base + '.o', specified_target)
+
+          deps = deps.replace(temp_output_base + default_object_extension, specified_target)
           with open(os.path.join(os.path.dirname(specified_target), os.path.basename(unsuffixed(input_files[0]) + '.d')), "w") as out_dep:
             out_dep.write(deps)
       else:
@@ -1689,6 +1708,10 @@ try:
 
       js_optimizer_queue += ['simplifyExpressions']
 
+      # simplify ifs if it is ok to make the code somewhat unreadable, and unless outlining (simplified ifs
+      # with commaified code breaks late aggressive variable elimination)
+      if shared.Settings.SIMPLIFY_IFS and (debug_level == 0 or profiling) and shared.Settings.OUTLINING_LIMIT == 0: js_optimizer_queue += ['simplifyIfs']
+
       if opt_level >= 3 and shared.Settings.PRECISE_F32: js_optimizer_queue += ['optimizeFrounds']
 
   if closure and not shared.Settings.ASM_JS:
@@ -1714,7 +1737,9 @@ try:
         js_optimizer_queue += ['registerize']
 
     if opt_level >= 2:
-      if debug_level < 2 and shared.Settings.ASM_JS: js_optimizer_queue += ['minifyNames']
+      if debug_level < 2 and shared.Settings.ASM_JS:
+        js_optimizer_queue += ['minifyNames']
+        if emit_symbol_map: js_optimizer_queue += ['symbolMap='+target+'.symbols']
       if debug_level == 0: js_optimizer_queue += ['minifyWhitespace']
 
     if closure and shared.Settings.ASM_JS:
@@ -1907,4 +1932,7 @@ finally:
       pass
   else:
     logging.info('emcc saved files are in:' + temp_dir)
+
+#//eliminate a = a in js opt. will kill STACKTOP = STACKTOP in funcs that do not use the C stack! add test for no STACKTOP or sp in such a func
+#// minify if into ?: ?
 

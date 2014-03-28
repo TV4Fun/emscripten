@@ -4600,8 +4600,6 @@ LibraryManager.library = {
     return __ZNKSt9exception4whatEv.buffer;
   },
 
-  _ZNSt9type_infoD2Ev: function(){},
-
   // RTTI hacks for exception handling, defining type_infos for common types.
   // The values are dummies. We simply use the addresses of these statically
   // allocated variables as unique identifiers.
@@ -6402,6 +6400,13 @@ LibraryManager.library = {
 
   siginterrupt: function() { throw 'siginterrupt not implemented' },
 
+  raise__deps: ['$ERRNO_CODES', '__setErrNo'],
+  raise: function(sig) {
+    // TODO:
+    ___setErrNo(ERRNO_CODES.ENOSYS);
+    return -1;
+  },
+
   // ==========================================================================
   // sys/wait.h
   // ==========================================================================
@@ -8169,7 +8174,9 @@ LibraryManager.library = {
   },
 
   setsockopt: function(d, level, optname, optval, optlen) {
+#if SOCKET_DEBUG
     console.log('ignoring setsockopt command');
+#endif
     return 0;
   },
 
@@ -8658,7 +8665,9 @@ LibraryManager.library = {
   },
 
   setsockopt: function(fd, level, optname, optval, optlen) {
+#if SOCKET_DEBUG
     console.log('ignoring setsockopt command');
+#endif
     return 0;
   },
 

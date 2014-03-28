@@ -165,8 +165,14 @@ var OUTLINING_LIMIT = 0; // A function size above which we try to automatically 
                          // throughput. It is hard to say what values to start testing
                          // with, but something around 20,000 to 100,000 might make sense.
                          // (The unit size is number of AST nodes.)
+                         // Outlining decreases maximum function size, but does so at the
+                         // cost of increasing overall code size as well as performance
+                         // (outlining itself makes code less optimized, and requires
+                         // emscripten to disable some passes that are incompatible with
+                         // it).
 
 var AGGRESSIVE_VARIABLE_ELIMINATION = 0; // Run aggressiveVariableElimination in js-optimizer.js
+var SIMPLIFY_IFS = 1; // Whether to simplify ifs in js-optimizer.js
 
 // Generated code debugging options
 var SAFE_HEAP = 0; // Check each write to the heap, for example, this will give a clear
@@ -224,6 +230,19 @@ var LIBRARY_DEBUG = 0; // Print out when we enter a library call (library*.js). 
                        //   emscripten_run_script("Runtime.debug = ...;");
 var SOCKET_DEBUG = 0; // Log out socket/network data transfer.
 var SOCKET_WEBRTC = 0; // Select socket backend, either webrtc or websockets.
+
+// As well as being configurable at compile time via the "-s" option the WEBSOCKET_URL and WEBSOCKET_SUBPROTOCOL
+// settings may configured at run time via the Module object e.g.
+// Module['websocket'] = {subprotocol: 'base64, binary, text'};
+// Module['websocket'] = {url: 'wss://', subprotocol: 'base64'};
+// Run time configuration may be useful as it lets an application select multiple different services.
+var WEBSOCKET_URL = 'ws://'; // A string containing either a WebSocket URL prefix (ws:// or wss://) or a complete
+                             // RFC 6455 URL - "ws[s]:" "//" host [ ":" port ] path [ "?" query ].
+                             // In the (default) case of only a prefix being specified the URL will be constructed from
+                             // prefix + addr + ':' + port
+                             // where addr and port are derived from the socket connect/bind/accept calls.
+var WEBSOCKET_SUBPROTOCOL = 'binary'; // A string containing a comma separated list of WebSocket subprotocols
+                                      // as would be present in the Sec-WebSocket-Protocol header.
 
 var OPENAL_DEBUG = 0; // Print out debugging information from our OpenAL implementation.
 

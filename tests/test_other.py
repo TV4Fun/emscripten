@@ -65,6 +65,7 @@ Options that are modified or new in %s include:
       # emcc src.cpp -c    and   emcc src.cpp -o src.[o|bc] ==> should give a .bc file
       #      regression check: -o js should create "js", with bitcode content
       for args in [['-c'], ['-o', 'src.o'], ['-o', 'src.bc'], ['-o', 'src.so'], ['-o', 'js']]:
+        print '-c stuff', args
         target = args[1] if len(args) == 2 else 'hello_world.o'
         self.clear()
         Popen([PYTHON, compiler, path_from_root('tests', 'hello_world' + suffix)] + args, stdout=PIPE, stderr=PIPE).communicate()
@@ -943,11 +944,12 @@ This pointer might make sense in another type signature: i: 0
                    args=['-I' + path_from_root('tests', 'zlib')], suffix='c')
 
   def test_symlink(self):
+    self.clear()
     if os.name == 'nt':
       return self.skip('Windows FS does not need to be tested for symlinks support, since it does not have them.')
     open(os.path.join(self.get_dir(), 'foobar.xxx'), 'w').write('int main(){ return 0; }')
     os.symlink(os.path.join(self.get_dir(), 'foobar.xxx'), os.path.join(self.get_dir(), 'foobar.c'))
-    Popen([PYTHON, EMCC, os.path.join(self.get_dir(), 'foobar.c'), '-o', os.path.join(self.get_dir(), 'foobar')], stdout=PIPE, stderr=PIPE).communicate()
+    Popen([PYTHON, EMCC, os.path.join(self.get_dir(), 'foobar.c'), '-o', os.path.join(self.get_dir(), 'foobar')]).communicate()
     assert os.path.exists(os.path.join(self.get_dir(), 'foobar'))
     try_delete(os.path.join(self.get_dir(), 'foobar'))
     try_delete(os.path.join(self.get_dir(), 'foobar.xxx'))
@@ -955,7 +957,7 @@ This pointer might make sense in another type signature: i: 0
 
     open(os.path.join(self.get_dir(), 'foobar.c'), 'w').write('int main(){ return 0; }')
     os.symlink(os.path.join(self.get_dir(), 'foobar.c'), os.path.join(self.get_dir(), 'foobar.xxx'))
-    Popen([PYTHON, EMCC, os.path.join(self.get_dir(), 'foobar.xxx'), '-o', os.path.join(self.get_dir(), 'foobar')], stdout=PIPE, stderr=PIPE).communicate()
+    Popen([PYTHON, EMCC, os.path.join(self.get_dir(), 'foobar.xxx'), '-o', os.path.join(self.get_dir(), 'foobar')]).communicate()
     assert os.path.exists(os.path.join(self.get_dir(), 'foobar'))
     try_delete(os.path.join(self.get_dir(), 'foobar'))
     try_delete(os.path.join(self.get_dir(), 'foobar.xxx'))
@@ -1586,6 +1588,8 @@ This pointer might make sense in another type signature: i: 0
   def test_warn_undefined(self):
     open(os.path.join(self.get_dir(), 'main.cpp'), 'w').write(r'''
       #include <stdio.h>
+      #include <SDL.h>
+      #include "SDL/SDL_opengl.h"
 
       extern "C" {
         void something();
@@ -1593,6 +1597,7 @@ This pointer might make sense in another type signature: i: 0
       }
 
       int main() {
+        printf("%p", SDL_GL_GetProcAddress("glGenTextures")); // pull in gl proc stuff, avoid warnings on emulation funcs
         something();
         elsey();
         return 0;
@@ -1612,6 +1617,7 @@ This pointer might make sense in another type signature: i: 0
             self.assertContained('unresolved symbol: something', output[1])
             self.assertContained('unresolved symbol: elsey', output[1])
             assert os.path.exists('a.out.js')
+            self.assertNotContained('unresolved symbol: emscripten_', output[1])
           elif action == 'ERROR' and value:
             self.assertContained('unresolved symbol: something', output[1])
             self.assertContained('unresolved symbol: elsey', output[1])
@@ -1768,14 +1774,9 @@ This pointer might make sense in another type signature: i: 0
   def test_js_optimizer(self):
     for input, expected, passes in [
       (path_from_root('tools', 'test-js-optimizer.js'), open(path_from_root('tools', 'test-js-optimizer-output.js')).read(),
-       ['hoistMultiples', 'loopOptimizer', 'removeAssignsToUndefined', 'simplifyExpressions']),
-      (path_from_root('tools', 'test-js-optimizer-t2c.js'), open(path_from_root('tools', 'test-js-optimizer-t2c-output.js')).read(),
-       ['simplifyExpressions', 'optimizeShiftsConservative']),
-      (path_from_root('tools', 'test-js-optimizer-t2.js'), open(path_from_root('tools', 'test-js-optimizer-t2-output.js')).read(),
-       ['simplifyExpressions', 'optimizeShiftsAggressive']),
-      # Make sure that optimizeShifts handles functions with shift statements.
-      (path_from_root('tools', 'test-js-optimizer-t3.js'), open(path_from_root('tools', 'test-js-optimizer-t3-output.js')).read(),
-       ['optimizeShiftsAggressive']),
+       ['hoistMultiples', 'removeAssignsToUndefined', 'simplifyExpressions']),
+      (path_from_root('tools', 'test-js-optimizer-si.js'), open(path_from_root('tools', 'test-js-optimizer-si-output.js')).read(),
+       ['simplifyIfs']),
       (path_from_root('tools', 'test-js-optimizer-regs.js'), open(path_from_root('tools', 'test-js-optimizer-regs-output.js')).read(),
        ['registerize']),
       (path_from_root('tools', 'eliminator', 'eliminator-test.js'), open(path_from_root('tools', 'eliminator', 'eliminator-test-output.js')).read(),
@@ -1971,23 +1972,6 @@ seeked= file.
     assert 'yello' in output, 'code works'
     code = open('a.out.js').read()
     assert 'SAFE_HEAP' in code, 'valid -s option had an effect'
-
-  def test_jcache_printf(self):
-    open(self.in_dir('src.cpp'), 'w').write(r'''
-      #include <stdio.h>
-      #include <stdint.h>
-      #include <emscripten.h>
-      int main() {
-        emscripten_jcache_printf("hello world\n");
-        emscripten_jcache_printf("hello %d world\n", 5);
-        emscripten_jcache_printf("hello %.3f world\n", 123.456789123);
-        emscripten_jcache_printf("hello %llx world\n", 0x1234567811223344ULL);
-        return 0;
-      }
-    ''')
-    Popen([PYTHON, EMCC, self.in_dir('src.cpp')]).communicate()
-    output = run_js('a.out.js')
-    self.assertIdentical('hello world\nhello 5 world\nhello 123.457 world\nhello 1234567811223300 world\n', output)
 
   def test_conftest_s_flag_passing(self):
     open(os.path.join(self.get_dir(), 'conftest.c'), 'w').write(r'''
@@ -2267,6 +2251,23 @@ int main()
     assert 'test.o' in head, 'Invalid dependency target'
     assert 'test.cpp' in tail and 'test.hpp' in tail, 'Invalid dependencies generated'
 
+  def test_dependency_file_2(self):
+    self.clear()
+    shutil.copyfile(path_from_root('tests', 'hello_world.c'), 'a.c')
+    Popen([PYTHON, EMCC, 'a.c', '-MMD', '-MF', 'test.d', '-c']).communicate()
+    self.assertContained(open('test.d').read(), 'a.o: a.c\n')
+
+    self.clear()
+    shutil.copyfile(path_from_root('tests', 'hello_world.c'), 'a.c')
+    Popen([PYTHON, EMCC, 'a.c', '-MMD', '-MF', 'test.d', '-c', '-o', 'test.o']).communicate()
+    self.assertContained(open('test.d').read(), 'test.o: a.c\n')
+
+    self.clear()
+    shutil.copyfile(path_from_root('tests', 'hello_world.c'), 'a.c')
+    os.mkdir('obj')
+    Popen([PYTHON, EMCC, 'a.c', '-MMD', '-MF', 'test.d', '-c', '-o', 'obj/test.o']).communicate()
+    self.assertContained(open('test.d').read(), 'obj/test.o: a.c\n')
+
   def test_quoted_js_lib_key(self):
     open('lib.js', 'w').write(r'''
 mergeInto(LibraryManager.library, {
@@ -2288,11 +2289,16 @@ mergeInto(LibraryManager.library, {
 
   def test_default_obj_ext(self):
     outdir = os.path.join(self.get_dir(), 'out_dir') + '/'
+
+    self.clear()
     os.mkdir(outdir)
-    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir], stdout=PIPE, stderr=PIPE)
+    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir])
     process.communicate()
     assert(os.path.isfile(outdir + 'hello_world.o'))
-    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir, '--default-obj-ext', 'obj'], stdout=PIPE, stderr=PIPE)
+
+    self.clear()
+    os.mkdir(outdir)
+    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir, '--default-obj-ext', 'obj'])
     process.communicate()
     assert(os.path.isfile(outdir + 'hello_world.obj'))
 
@@ -2558,7 +2564,7 @@ int main()
   def test_llvm_lit(self):
     llvm_src = LLVM_ROOT
     while not os.path.exists(os.path.join(llvm_src, 'emscripten-version.txt')): llvm_src = os.path.dirname(llvm_src)
-    cmd = [os.path.join(LLVM_ROOT, 'llvm-lit'), os.path.join(llvm_src, 'test', 'CodeGen', 'JS')]
+    cmd = [os.path.join(LLVM_ROOT, 'llvm-lit'), '-v', os.path.join(llvm_src, 'test', 'CodeGen', 'JS')]
     print cmd
     p = Popen(cmd)
     p.communicate()
@@ -2574,4 +2580,105 @@ int main()
     out, err = Popen([PYTHON, EMCC, 'a.bc'], stdout=PIPE, stderr=PIPE).communicate()
     assert 'warning' in err, err
     assert 'incorrect target triple' in err, err
+
+  def test_simplify_ifs(self):
+    def test(src, nums):
+      open('src.c', 'w').write(src)
+      for opts, ifs in [
+        [['-g2'], nums[0]],
+        [['-profiling'], nums[1]],
+        [['-profiling', '-g2'], nums[2]]
+      ]:
+        print opts, ifs
+        try_delete('a.out.js')
+        Popen([PYTHON, EMCC, 'src.c', '-O2'] + opts, stdout=PIPE).communicate()
+        src = open('a.out.js').read()
+        main = src[src.find('function _main'):src.find('\n}', src.find('function _main'))]
+        actual_ifs = main.count('if (')
+        assert ifs == actual_ifs, main + ' : ' + str([ifs, actual_ifs])
+        #print main
+
+    test(r'''
+      #include <stdio.h>
+      #include <string.h>
+      int main(int argc, char **argv) {
+        if (argc > 5 && strlen(argv[0]) > 1 && strlen(argv[1]) > 2) printf("halp");
+        return 0;
+      }
+    ''', [3, 1, 1])
+
+    test(r'''
+      #include <stdio.h>
+      #include <string.h>
+      int main(int argc, char **argv) {
+        while (argc % 3 == 0) {
+          if (argc > 5 && strlen(argv[0]) > 1 && strlen(argv[1]) > 2) {
+            printf("halp");
+            argc++;
+          } else {
+            while (argc > 0) {
+              printf("%d\n", argc--);
+            }
+          }
+        }
+        return 0;
+      }
+    ''', [8, 5, 5])
+
+    test(r'''
+      #include <stdio.h>
+      #include <string.h>
+      int main(int argc, char **argv) {
+        while (argc % 17 == 0) argc *= 2;
+        if (argc > 5 && strlen(argv[0]) > 10 && strlen(argv[1]) > 20) {
+          printf("halp");
+          argc++;
+        } else {
+          printf("%d\n", argc--);
+        }
+        while (argc % 17 == 0) argc *= 2;
+        return argc;
+      }
+    ''', [6, 3, 3])
+
+    test(r'''
+      #include <stdio.h>
+      #include <stdlib.h>
+
+      int main(int argc, char *argv[]) {
+        if (getenv("A") && getenv("B")) {
+            printf("hello world\n");
+        } else {
+            printf("goodnight moon\n");
+        }
+        printf("and that's that\n");
+        return 0;
+      }
+    ''', [3, 1, 1])
+
+    test(r'''
+      #include <stdio.h>
+      #include <stdlib.h>
+
+      int main(int argc, char *argv[]) {
+        if (getenv("A") || getenv("B")) {
+            printf("hello world\n");
+        }
+        printf("and that's that\n");
+        return 0;
+      }
+    ''', [3, 1, 1])
+
+  def test_symbol_map(self):
+    for m in [0, 1]:
+      self.clear()
+      cmd = [PYTHON, EMCC, path_from_root('tests', 'hello_world.c'), '-O2']
+      if m: cmd += ['--emit-symbol-map']
+      print cmd
+      stdout, stderr = Popen(cmd, stderr=PIPE).communicate()
+      assert ('''wrote symbol map file''' in stderr) == m, stderr
+      assert (os.path.exists('a.out.js.symbols') == m), stderr
+      if m:
+        symbols = open('a.out.js.symbols').read()
+        assert ':_main' in symbols
 
