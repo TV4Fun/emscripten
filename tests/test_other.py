@@ -856,10 +856,14 @@ This pointer might make sense in another type signature: i: 0
         if engine == SPIDERMONKEY_ENGINE: self.validate_asmjs(out)
 
       # zlib compression library. tests function pointers in initializers and many other things
-      test('zlib', '', open(path_from_root('tests', 'zlib', 'example.c'), 'r').read(), 
-                       self.get_zlib_library(),
-                       open(path_from_root('tests', 'zlib', 'ref.txt'), 'r').read(),
-                       args=['-I' + path_from_root('tests', 'zlib')], suffix='c')
+      try:
+        os.environ['EMCC_FORCE_STDLIBS'] = 'libcextra'
+        test('zlib', '', open(path_from_root('tests', 'zlib', 'example.c'), 'r').read(), 
+                         self.get_zlib_library(),
+                         open(path_from_root('tests', 'zlib', 'ref.txt'), 'r').read(),
+                         args=['-I' + path_from_root('tests', 'zlib')], suffix='c')
+      finally:
+        del os.environ['EMCC_FORCE_STDLIBS']
 
       use_cmake = WINDOWS
       bullet_library = get_bullet_library(self, use_cmake)
@@ -1876,7 +1880,6 @@ This pointer might make sense in another type signature: i: 0
 
   def test_embind(self):
     def nonfc():
-      if os.environ.get('EMCC_FAST_COMPILER') != '0': return self.skip('todo in fastcomp')
       for args, fail in [
         ([], True), # without --bind, we fail
         (['--bind'], False),
@@ -2377,6 +2380,11 @@ int main() {
     err = Popen([PYTHON, EMCC, 'src.cpp', '-include', 'header.h', '-Xclang', '-print-stats'], stderr=PIPE).communicate()
     assert '*** PCH/Modules Loaded:\nModule: header.h.gch' not in err[1], err[1]
 
+    # with specified target via -o
+    try_delete('header.h.gch')
+    Popen([PYTHON, EMCC, '-xc++-header', 'header.h', '-o', 'my.gch']).communicate()
+    assert os.path.exists('my.gch')
+
   def test_warn_unaligned(self):
     if os.environ.get('EMCC_FAST_COMPILER') == '0': return self.skip('need fastcomp')
     open('src.cpp', 'w').write(r'''
@@ -2533,12 +2541,11 @@ int main()
 
     for opts, expected, compile_expected in [
       ([], None, [IMPLICIT_ERROR]),
-      (['-Wno-error=implicit-function-declaration'], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], [IMPLICIT_WARNING]), # turn error into warning
-      (['-Wno-implicit-function-declaration'], ['abort()', 'it is worth building your source files with -Werror (warnings are errors), as warnings can indicate undefined behavior which can cause this'], []), # turn error into nothing at all
-      (['-Wno-error=implicit-function-declaration', '-s', 'ASSERTIONS=2'], ['abort()', 'This pointer might make sense in another type signature'], []),
-      (['-Wno-error=implicit-function-declaration', '-O1'], ['hello 2\nhello 5\n'], []), # invalid output - second arg is sent as varargs, but needs to be int. llvm optimizer avoided the crash silently, caused undefined behavior... at least people can debug this by running an -O0 build.
+      (['-Wno-error=implicit-function-declaration'], ['hello '], [IMPLICIT_WARNING]), # turn error into warning
+      (['-Wno-implicit-function-declaration'], ['hello '], []), # turn error into nothing at all (runtime output is incorrect)
     ]:
       print opts, expected
+      try_delete('a.out.js')
       stdout, stderr = Popen([PYTHON, EMCC, 'src.c'] + opts, stderr=PIPE).communicate()
       for ce in compile_expected + ['''warning: incompatible pointer types''']:
         self.assertContained(ce, stderr)
@@ -2571,15 +2578,29 @@ int main()
     assert p.returncode == 0, 'LLVM tests must pass with exit code 0'
 
   def test_odin_validation(self):
+    if not SPIDERMONKEY_ENGINE or SPIDERMONKEY_ENGINE not in JS_ENGINES: return self.skip('this test tests asm.js validation in SpiderMonkey')
     Popen([PYTHON, EMCC, path_from_root('tests', 'hello_world.c'), '-O1'], stdout=PIPE, stderr=PIPE).communicate()
     output = run_js('a.out.js', stderr=PIPE, full_output=True, engine=SPIDERMONKEY_ENGINE)
     assert 'asm.js' in output, 'spidermonkey should mention asm.js compilation: ' + output
 
   def test_bad_triple(self):
-    Popen([CLANG, path_from_root('tests', 'hello_world.c'), '-c', '-emit-llvm', '-o', 'a.bc'], stdout=PIPE, stderr=PIPE).communicate()
+    Popen([CLANG, path_from_root('tests', 'hello_world.c'), '-c', '-emit-llvm', '-o', 'a.bc'] + get_clang_native_args(), stdout=PIPE, stderr=PIPE).communicate()
     out, err = Popen([PYTHON, EMCC, 'a.bc'], stdout=PIPE, stderr=PIPE).communicate()
     assert 'warning' in err, err
     assert 'incorrect target triple' in err, err
+  
+  def test_valid_abspath(self):
+    # Test whether abspath warning appears
+    abs_include_path = path_from_root('tests')
+    process = Popen([PYTHON, EMCC, '-I%s' % abs_include_path, path_from_root('tests', 'hello_world.c')], stdout=PIPE, stderr=PIPE)
+    out, err = process.communicate()
+    warning = '-I or -L of an absolute path "-I%s" encountered. If this is to a local system header/library, it may cause problems (local system files make sense for compiling natively on your system, but not necessarily to JavaScript). Pass \'-Wno-warn-absolute-paths\' to emcc to hide this warning.' % abs_include_path
+    assert(warning in err)
+    
+    # Hide warning for this include path
+    process = Popen([PYTHON, EMCC, '--valid-abspath', abs_include_path,'-I%s' % abs_include_path, path_from_root('tests', 'hello_world.c')], stdout=PIPE, stderr=PIPE)
+    out, err = process.communicate()
+    assert(warning not in err)
 
   def test_simplify_ifs(self):
     def test(src, nums):
@@ -2692,4 +2713,83 @@ int main()
     cmd = Popen([PYTHON, EMCC, 'hello_world.o', '-o', 'hello_world.bc']).communicate()
     assert os.path.exists('hello_world.o')
     assert os.path.exists('hello_world.bc')
+
+  def test_bad_function_pointer_cast(self):
+    open('src.cpp', 'w').write(r'''
+#include <stdio.h>
+
+typedef int (*callback) (int, ...);
+
+int impl(int foo) {
+  printf("Hello, world.\n");
+  return 0;
+}
+
+int main() {
+  volatile callback f = (callback) impl;
+  f(0); /* This fails with or without additional arguments. */
+  return 0;
+}
+''')
+
+    for opts in [0, 1, 2]:
+      for safe in [0, 1]:
+        cmd = [PYTHON, EMCC, 'src.cpp', '-O' + str(opts), '-s', 'SAFE_HEAP=' + str(safe)]
+        print cmd
+        Popen(cmd).communicate()
+        output = run_js('a.out.js', stderr=PIPE, full_output=True)
+        if safe:
+          assert 'Function table mask error' in output, output
+        else:
+          if opts == 0:
+            assert 'Invalid function pointer called' in output, output
+          else:
+            assert 'abort()' in output, output
+
+  def test_aliased_func_pointers(self):
+    open('src.cpp', 'w').write(r'''
+#include <stdio.h>
+
+int impl1(int foo) { return foo; }
+float impla(float foo) { return foo; }
+int impl2(int foo) { return foo+1; }
+float implb(float foo) { return foo+1; }
+int impl3(int foo) { return foo+2; }
+float implc(float foo) { return foo+2; }
+
+int main(int argc, char **argv) {
+  volatile void *f = (void*)impl1;
+  if (argc == 50) f = (void*)impla;
+  if (argc == 51) f = (void*)impl2;
+  if (argc == 52) f = (void*)implb;
+  if (argc == 53) f = (void*)impl3;
+  if (argc == 54) f = (void*)implc;
+  return (int)f;
+}
+''')
+
+    print 'aliasing'
+
+    sizes_ii = {}
+    sizes_dd = {}
+  
+    for alias in [None, 0, 1]:
+      cmd = [PYTHON, EMCC, 'src.cpp', '-O1']
+      if alias is not None:
+        cmd += ['-s', 'ALIASING_FUNCTION_POINTERS=' + str(alias)]
+      else:
+        alias = -1
+      print cmd
+      Popen(cmd).communicate()
+      src = open('a.out.js').read().split('\n')
+      for line in src:
+        if line.strip().startswith('var FUNCTION_TABLE_ii = '):
+          sizes_ii[alias] = line.count(',')
+        if line.strip().startswith('var FUNCTION_TABLE_dd = '):
+          sizes_dd[alias] = line.count(',')
+
+    for sizes in [sizes_ii, sizes_dd]:
+      assert sizes[-1] == 3 # default - let them alias
+      assert sizes[0] == 7 # no aliasing, all unique, fat tables
+      assert sizes[1] == 3 # aliased once more
 

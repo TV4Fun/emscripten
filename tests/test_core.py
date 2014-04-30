@@ -988,6 +988,7 @@ class T(RunnerCore): # Short name, to make it more fun to use manually on the co
     self.do_run_from_file(src, output)
 
   def test_strndup(self):
+    if self.run_name.startswith('s_'): return self.skip('musl libc strndup() assumes that C strings can be loaded via i16 and i32 loads.')
     test_path = path_from_root('tests', 'core', 'test_strndup')
     src, output = (test_path + s for s in ('.in', '.out'))
 
@@ -2982,7 +2983,7 @@ def process(filename):
                 output_nicerizer=lambda x, err: x.replace('\n', '*'),
                 post_build=self.dlfcn_post_build)
 
-    if Settings.ASM_JS and os.path.exists(SPIDERMONKEY_ENGINE[0]):
+    if Settings.ASM_JS and SPIDERMONKEY_ENGINE and os.path.exists(SPIDERMONKEY_ENGINE[0]):
       out = run_js('liblib.so', engine=SPIDERMONKEY_ENGINE, full_output=True, stderr=STDOUT)
       if 'asm' in out:
         self.validate_asmjs(out)
@@ -3766,6 +3767,7 @@ int main()
     self.do_run_from_file(src, output)
 
   def test_strstr(self):
+    if self.run_name.startswith('s_'): return self.skip('musl libc strstr() assumes that C strings can be loaded via i16 and i32 loads.')
     test_path = path_from_root('tests', 'core', 'test_strstr')
     src, output = (test_path + s for s in ('.in', '.out'))
 
@@ -4095,6 +4097,10 @@ def process(filename):
     src = open(path_from_root('tests', 'dirent', 'test_readdir.c'), 'r').read()
     self.do_run(src, 'success', force_c=True)
 
+  def test_readdir_empty(self):
+    src = open(path_from_root('tests', 'dirent', 'test_readdir_empty.c'), 'r').read()
+    self.do_run(src, 'success', force_c=True)
+
   def test_stat(self):
     src = open(path_from_root('tests', 'stat', 'test_stat.c'), 'r').read()
     self.do_run(src, 'success', force_c=True)
@@ -4272,6 +4278,7 @@ def process(filename):
     self.do_run(src, expected, extra_emscripten_args=['-H', 'libc/unistd.h'])
 
   def test_unistd_ttyname(self):
+    if self.run_name.startswith('s_'): return self.skip('musl libc strstr() assumes that C strings can be loaded via i16 and i32 loads.')
     src = open(path_from_root('tests', 'unistd', 'ttyname.c'), 'r').read()
     self.do_run(src, 'success', force_c=True)
 
@@ -4413,7 +4420,14 @@ PORT: 3979
   def test_atomic(self):
     test_path = path_from_root('tests', 'core', 'test_atomic')
     src, output = (test_path + s for s in ('.in', '.out'))
+    self.do_run_from_file(src, output)
 
+  def test_atomic_cxx(self):
+    if self.emcc_args is None: return self.skip('needs emcc')
+    if os.environ.get('EMCC_FAST_COMPILER') == '0': return self.skip('needs fastcomp')
+    test_path = path_from_root('tests', 'core', 'test_atomic_cxx')
+    src, output = (test_path + s for s in ('.cpp', '.txt'))
+    Building.COMPILER_TEST_OPTS += ['-std=c++11']
     self.do_run_from_file(src, output)
 
   def test_phiundef(self):
@@ -5258,8 +5272,10 @@ def process(filename):
         if 'newfail' in name: continue
         if os.environ.get('EMCC_FAST_COMPILER') == '0' and os.path.basename(name) in [
           '18.cpp', '15.c'
-        ]:
-          continue # works only in fastcomp
+        ]: continue # works only in fastcomp
+        if x == 'lto' and self.run_name == 'default' and os.path.basename(name) in [
+          '19.c'
+        ]: continue # LLVM LTO bug
 
         print name
         self.do_run(open(path_from_root('tests', 'fuzz', name)).read(),
@@ -5619,7 +5635,6 @@ def process(filename):
 
   def test_embind(self):
     if self.emcc_args is None: return self.skip('requires emcc')
-    if os.environ.get('EMCC_FAST_COMPILER') != '0': return self.skip('todo in fastcomp')
     Building.COMPILER_TEST_OPTS += ['--bind']
 
     src = r'''
@@ -5642,7 +5657,8 @@ def process(filename):
 
   def test_embind_2(self):
     if self.emcc_args is None: return self.skip('requires emcc')
-    if os.environ.get('EMCC_FAST_COMPILER') != '0': return self.skip('todo in fastcomp')
+    if self.run_name == 'asm2f': return self.skip('embind/asm.js not compatible with PRECISE_F32 because it changes signature strings')
+    if self.run_name == 'slow2asm': return self.skip('embind/asm.js requires fastcomp')
     Building.COMPILER_TEST_OPTS += ['--bind', '--post-js', 'post.js']
     open('post.js', 'w').write('''
       Module.print('lerp ' + Module.lerp(1, 2, 0.66) + '.');
@@ -5954,6 +5970,22 @@ def process(filename):
   src.close()
 '''
       self.do_run(src, '|hello|43|world|41|', post_build=post)
+
+  def test_webidl(self):
+    if self.emcc_args is None: return self.skip('requires emcc')
+
+    output = Popen([PYTHON, path_from_root('tools', 'webidl_binder.py'),
+                            path_from_root('tests', 'webidl', 'test.idl'),
+                            'glue']).communicate()[0]
+    assert os.path.exists('glue.cpp')
+    assert os.path.exists('glue.js')
+
+    self.emcc_args += ['--post-js', 'glue.js',
+                       '--post-js', path_from_root('tests', 'webidl', 'post.js')]
+    shutil.copyfile(path_from_root('tests', 'webidl', 'test.h'), self.in_dir('test.h'))
+    shutil.copyfile(path_from_root('tests', 'webidl', 'test.cpp'), self.in_dir('test.cpp'))
+    src = open('test.cpp').read()
+    self.do_run(src, open(path_from_root('tests', 'webidl', 'output.txt')).read())
 
   def test_typeinfo(self):
     if os.environ.get('EMCC_FAST_COMPILER') != '0': return self.skip('fastcomp does not support RUNTIME_TYPE_INFO')

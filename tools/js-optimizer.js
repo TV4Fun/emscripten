@@ -3519,12 +3519,15 @@ function eliminate(ast, memSafe) {
           seenUses[name]++;
         }
       } else if (type === 'while') {
+        if (!asm) return;
         // try to remove loop helper variables specifically
         var stats = node[2][1];
         var last = stats[stats.length-1];
         if (last && last[0] === 'if' && last[2][0] === 'block' && last[3] && last[3][0] === 'block') {
           var ifTrue = last[2];
           var ifFalse = last[3];
+          clearEmptyNodes(ifTrue[1]);
+          clearEmptyNodes(ifFalse[1]);
           var flip = false;
           if (ifFalse[1][0] && ifFalse[1][0][0] === 'break') { // canonicalize break in the if
             var temp = ifFalse;
@@ -3550,6 +3553,25 @@ function eliminate(ast, memSafe) {
                 }
               }
             }
+            // remove loop vars that are used in the rest of the else
+            for (var i = 0; i < assigns.length; i++) {
+              if (assigns[i][0] === 'stat' && assigns[i][1][0] === 'assign') {
+                var assign = assigns[i][1];
+                if (!(assign[1] === true && assign[2][0] === 'name' && assign[3][0] === 'name') || loopers.indexOf(assign[2][1]) < 0) {
+                  // this is not one of the loop assigns
+                  traverse(assign, function(node, type) {
+                    if (type === 'name') {
+                      var index = loopers.indexOf(node[1]);
+                      if (index < 0) index = helpers.indexOf(node[1]);
+                      if (index >= 0) {
+                        loopers.splice(index, 1);
+                        helpers.splice(index, 1);
+                      }
+                    }
+                  });
+                }
+              }
+            }
             if (loopers.length === 0) return;
             for (var l = 0; l < loopers.length; l++) {
               var looper = loopers[l];
@@ -3570,17 +3592,25 @@ function eliminate(ast, memSafe) {
                 }
               }
               if (found < 0) return;
+              // if a loop variable is used after we assigned to the helper, we must save its value and use that.
+              // (note that this can happen due to elimination, if we eliminate an expression containing the
+              // loop var far down, past the assignment!)
+              var temp = looper + '$looptemp';
               var looperUsed = false;
-              for (var i = found+1; i < stats.length && !looperUsed; i++) {
+              assert(!(temp in asmData.vars)); 
+              for (var i = found+1; i < stats.length; i++) {
                 var curr = i < stats.length-1 ? stats[i] : last[1]; // on the last line, just look in the condition
                 traverse(curr, function(node, type) {
                   if (type === 'name' && node[1] === looper) {
+                    node[1] = temp;
                     looperUsed = true;
-                    return true;
                   }
                 });
               }
-              if (looperUsed) return;
+              if (looperUsed) {
+                asmData.vars[temp] = asmData.vars[looper];
+                stats.splice(found, 0, ['stat', ['assign', true, ['name', temp], ['name', looper]]]);
+              }
             }
             for (var l = 0; l < helpers.length; l++) {
               for (var k = 0; k < helpers.length; k++) {
@@ -4472,7 +4502,7 @@ function outline(ast) {
       for (var returnType in codeInfo.hasReturnType) {
         reps.push(makeIf(
           makeComparison(makeAsmCoercion(['name', 'tempValue'], ASM_INT), '==', ['num', controlFromAsmType(returnType)]),
-          [['stat', ['return', makeAsmCoercion(['name', 'tempInt'], returnType | 0)]]]
+          [['stat', ['return', makeAsmCoercion(['name', returnType == ASM_INT ? 'tempInt' : 'tempDouble'], returnType | 0)]]]
         ));
       }
       if (codeInfo.hasBreak) {
@@ -4896,36 +4926,44 @@ function safeHeap(ast) {
         }
       }
     } else if (type === 'sub') {
-      var heap = node[1][1];
-      if (heap[0] !== 'H') return;
-      var ptr = fixPtr(node[2], heap);
-      // SAFE_HEAP_LOAD(ptr, bytes, isFloat) 
-      switch (heap) {
-        case 'HEAP8': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 1], ['num', '0'], ['num', '0']]], ASM_INT);
+      var target = node[1][1];
+      if (target[0] === 'H') {
+        // heap access
+        var heap = target;
+        var ptr = fixPtr(node[2], heap);
+        // SAFE_HEAP_LOAD(ptr, bytes, isFloat) 
+        switch (heap) {
+          case 'HEAP8': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 1], ['num', '0'], ['num', '0']]], ASM_INT);
+          }
+          case 'HEAPU8': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 1], ['num', '0'], ['num', '1']]], ASM_INT);
+          }
+          case 'HEAP16': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 2], ['num', '0'], ['num', '0']]], ASM_INT);
+          }
+          case 'HEAPU16': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 2], ['num', '0'], ['num', '1']]], ASM_INT);
+          }
+          case 'HEAP32': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 4], ['num', '0'], ['num', '0']]], ASM_INT);
+          }
+          case 'HEAPU32': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 4], ['num', '0'], ['num', '1']]], ASM_INT);
+          }
+          case 'HEAPF32': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 4], ['num', '1'], ['num', '0']]], ASM_DOUBLE);
+          }
+          case 'HEAPF64': {
+            return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 8], ['num', '1'], ['num', '0']]], ASM_DOUBLE);
+          }
+          default: throw 'bad heap ' + heap;
         }
-        case 'HEAPU8': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 1], ['num', '0'], ['num', '1']]], ASM_INT);
-        }
-        case 'HEAP16': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 2], ['num', '0'], ['num', '0']]], ASM_INT);
-        }
-        case 'HEAPU16': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 2], ['num', '0'], ['num', '1']]], ASM_INT);
-        }
-        case 'HEAP32': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 4], ['num', '0'], ['num', '0']]], ASM_INT);
-        }
-        case 'HEAPU32': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 4], ['num', '0'], ['num', '1']]], ASM_INT);
-        }
-        case 'HEAPF32': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 4], ['num', '1'], ['num', '0']]], ASM_DOUBLE);
-        }
-        case 'HEAPF64': {
-          return makeAsmCoercion(['call', ['name', 'SAFE_HEAP_LOAD'], [ptr, ['num', 8], ['num', '1'], ['num', '0']]], ASM_DOUBLE);
-        }
-        default: throw 'bad heap ' + heap;
+      } else {
+        assert(target[0] == 'F');
+        // function table indexing mask
+        assert(node[2][0] === 'binary' && node[2][1] === '&');
+        node[2][2] = makeAsmCoercion(['call', ['name', 'SAFE_FT_MASK'], [makeAsmCoercion(node[2][2], ASM_INT), makeAsmCoercion(node[2][3], ASM_INT)]], ASM_INT);
       }
     }
   });
