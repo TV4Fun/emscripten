@@ -1300,7 +1300,7 @@ keydown(100);keyup(100); // trigger the end
       time.sleep(2)
 
   def test_glgears(self):
-    self.btest('hello_world_gles.c', reference='gears.png', reference_slack=1,
+    self.btest('hello_world_gles.c', reference='gears.png', reference_slack=2,
         args=['-DHAVE_BUILTIN_SINCOS'], outfile='something.html',
         message='You should see animating gears.')
 
@@ -1322,7 +1322,7 @@ keydown(100);keyup(100); // trigger the end
     self.btest('full_es2_sdlproc.c', '1', args=['-s', 'GL_TESTING=1', '-DHAVE_BUILTIN_SINCOS', '-s', 'FULL_ES2=1'])
 
   def test_glgears_deriv(self):
-    self.btest('hello_world_gles_deriv.c', reference='gears.png', reference_slack=1,
+    self.btest('hello_world_gles_deriv.c', reference='gears.png', reference_slack=2,
         args=['-DHAVE_BUILTIN_SINCOS'], outfile='something.html',
         message='You should see animating gears.')
     with open('something.html') as f:
@@ -1553,7 +1553,7 @@ void *getBindBuffer() {
 
   def test_sdl_rotozoom(self):
     shutil.copyfile(path_from_root('tests', 'screenshot.png'), os.path.join(self.get_dir(), 'screenshot.png'))
-    self.btest('sdl_rotozoom.c', reference='sdl_rotozoom.png', args=['--preload-file', 'screenshot.png'])
+    self.btest('sdl_rotozoom.c', reference='sdl_rotozoom.png', args=['--preload-file', 'screenshot.png'], reference_slack=3)
 
   def test_sdl_gfx_primitives(self):
     self.btest('sdl_gfx_primitives.c', reference='sdl_gfx_primitives.png', reference_slack=1)

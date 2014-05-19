@@ -1223,6 +1223,8 @@ try:
       value = '"@' + os.path.abspath(value[1:]) + '"'
       value = value.replace('\\\\', '/').replace('\\', '/') # Convert backslash paths to forward slashes on Windows as well, since the JS compiler otherwise needs the backslashes escaped (alternative is to escape all input paths passing to JS, which feels clumsier to read)
     exec('shared.Settings.' + key + ' = ' + value)
+    if key == 'EXPORTED_FUNCTIONS':
+      shared.Settings.ORIGINAL_EXPORTED_FUNCTIONS = shared.Settings.EXPORTED_FUNCTIONS[:] # used for warnings in emscripten.py
 
   fastcomp = os.environ.get('EMCC_FAST_COMPILER') != '0'
 
@@ -1370,7 +1372,7 @@ try:
       args += ['-o', specified_target]
     logging.debug("running (for precompiled headers): " + call + ' ' + ' '.join(args))
     execute([call] + args) # let compiler frontend print directly, so colors are saved (PIPE kills that)
-    sys.exit(1)
+    sys.exit(0)
 
   def get_bitcode_file(input_file):
     if final_suffix not in JS_CONTAINING_SUFFIXES:
@@ -1727,7 +1729,7 @@ try:
       # with commaified code breaks late aggressive variable elimination)
       if shared.Settings.SIMPLIFY_IFS and (debug_level == 0 or profiling) and shared.Settings.OUTLINING_LIMIT == 0: js_optimizer_queue += ['simplifyIfs']
 
-      if opt_level >= 3 and shared.Settings.PRECISE_F32: js_optimizer_queue += ['optimizeFrounds']
+      if shared.Settings.PRECISE_F32: js_optimizer_queue += ['optimizeFrounds']
 
   if closure and not shared.Settings.ASM_JS:
     flush_js_optimizer_queue()
@@ -1746,7 +1748,7 @@ try:
       js_optimizer_extra_info['sizeToOutline'] = shared.Settings.OUTLINING_LIMIT
 
     if opt_level >= 2 and (not closure or shared.Settings.ASM_JS) and shared.Settings.RELOOP and debug_level < 3:
-      if shared.Settings.ASM_JS and opt_level >= 3 and shared.Settings.OUTLINING_LIMIT == 0:
+      if shared.Settings.ASM_JS and opt_level >= 3:
         js_optimizer_queue += ['registerizeHarder']
       else:
         js_optimizer_queue += ['registerize']

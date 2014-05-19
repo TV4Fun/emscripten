@@ -1879,24 +1879,20 @@ This pointer might make sense in another type signature: i: 0
     assert 'If you see this - the world is all right!' in output
 
   def test_embind(self):
-    def nonfc():
-      for args, fail in [
-        ([], True), # without --bind, we fail
-        (['--bind'], False),
-        (['--bind', '-O1'], False),
-        (['--bind', '-O2'], False),
-        (['--bind', '-O1', '-s', 'ASM_JS=0'], False),
-        (['--bind', '-O2', '-s', 'ASM_JS=0'], False)
-      ]:
-        print args, fail
-        self.clear()
-        try_delete(self.in_dir('a.out.js'))
-        Popen([PYTHON, EMCC, path_from_root('tests', 'embind', 'embind_test.cpp'), '--post-js', path_from_root('tests', 'embind', 'underscore-1.4.2.js'), '--post-js', path_from_root('tests', 'embind', 'imvu_test_adapter.js'), '--post-js', path_from_root('tests', 'embind', 'embind.test.js')] + args, stderr=PIPE if fail else None).communicate()
-        assert os.path.exists(self.in_dir('a.out.js')) == (not fail)
-        if not fail:
-          output = run_js(self.in_dir('a.out.js'), stdout=PIPE, stderr=PIPE, full_output=True)
-          assert "FAIL" not in output, output
-    nonfastcomp(nonfc)
+    for args, fail in [
+      ([], True), # without --bind, we fail
+      (['--bind'], False),
+      (['--bind', '-O1'], False),
+      (['--bind', '-O2'], False),
+    ]:
+      print args, fail
+      self.clear()
+      try_delete(self.in_dir('a.out.js'))
+      Popen([PYTHON, EMCC, path_from_root('tests', 'embind', 'embind_test.cpp'), '--post-js', path_from_root('tests', 'embind', 'underscore-1.4.2.js'), '--post-js', path_from_root('tests', 'embind', 'imvu_test_adapter.js'), '--post-js', path_from_root('tests', 'embind', 'embind.test.js')] + args, stderr=PIPE if fail else None).communicate()
+      assert os.path.exists(self.in_dir('a.out.js')) == (not fail)
+      if not fail:
+        output = run_js(self.in_dir('a.out.js'), stdout=PIPE, stderr=PIPE, full_output=True, assert_returncode=0)
+        assert "FAIL" not in output, output
 
   def test_llvm_nativizer(self):
     try:
@@ -2295,15 +2291,17 @@ mergeInto(LibraryManager.library, {
 
     self.clear()
     os.mkdir(outdir)
-    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir])
-    process.communicate()
-    assert(os.path.isfile(outdir + 'hello_world.o'))
+    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir], stderr=PIPE)
+    out, err = process.communicate()
+    assert not err, err
+    assert os.path.isfile(outdir + 'hello_world.o')
 
     self.clear()
     os.mkdir(outdir)
-    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir, '--default-obj-ext', 'obj'])
-    process.communicate()
-    assert(os.path.isfile(outdir + 'hello_world.obj'))
+    process = Popen([PYTHON, EMCC, '-c', path_from_root('tests', 'hello_world.c'), '-o', outdir, '--default-obj-ext', 'obj'], stderr=PIPE)
+    out, err = process.communicate()
+    assert not err, err
+    assert os.path.isfile(outdir + 'hello_world.obj')
 
   def test_doublestart_bug(self):
     open('code.cpp', 'w').write(r'''
@@ -2792,4 +2790,15 @@ int main(int argc, char **argv) {
       assert sizes[-1] == 3 # default - let them alias
       assert sizes[0] == 7 # no aliasing, all unique, fat tables
       assert sizes[1] == 3 # aliased once more
+
+  def test_bad_export(self):
+    for m in ['', ' ']:
+      self.clear()
+      cmd = [PYTHON, EMCC, path_from_root('tests', 'hello_world.c'), '-s', 'EXPORTED_FUNCTIONS=["' + m + '_main"]']
+      print cmd
+      stdout, stderr = Popen(cmd, stderr=PIPE).communicate()
+      if m:
+        assert 'function requested to be exported, but not implemented: " _main"' in stderr, stderr
+      else:
+        self.assertContained('hello, world!', run_js('a.out.js'))
 

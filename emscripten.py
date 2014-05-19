@@ -455,7 +455,7 @@ def emscript(infile, settings, outfile, libraries=[], compiler_engine=None,
 
     basic_funcs = ['abort', 'assert', 'asmPrintInt', 'asmPrintFloat'] + [m.replace('.', '_') for m in math_envs]
     if settings['RESERVED_FUNCTION_POINTERS'] > 0: basic_funcs.append('jsCall')
-    if settings['SAFE_HEAP']: basic_funcs += ['SAFE_HEAP_LOAD', 'SAFE_HEAP_STORE']
+    if settings['SAFE_HEAP']: basic_funcs += ['SAFE_HEAP_LOAD', 'SAFE_HEAP_STORE', 'SAFE_FT_MASK']
     if settings['CHECK_HEAP_ALIGN']: basic_funcs += ['CHECK_ALIGN_2', 'CHECK_ALIGN_4', 'CHECK_ALIGN_8']
     if settings['ASSERTIONS']:
       basic_funcs += ['nullFunc']
@@ -477,7 +477,7 @@ def emscript(infile, settings, outfile, libraries=[], compiler_engine=None,
     if '_rand' in exported_implemented_functions or '_srand' in exported_implemented_functions:
       basic_vars += ['___rand_seed']
 
-    asm_runtime_funcs = ['stackAlloc', 'stackSave', 'stackRestore', 'setThrew'] + ['setTempRet%d' % i for i in range(10)]
+    asm_runtime_funcs = ['stackAlloc', 'stackSave', 'stackRestore', 'setThrew'] + ['setTempRet%d' % i for i in range(10)] + ['getTempRet%d' % i for i in range(10)]
     # function tables
     function_tables = ['dynCall_' + table for table in last_forwarded_json['Functions']['tables']]
     function_tables_impls = []
@@ -584,7 +584,7 @@ var asm = (function(global, env, buffer) {
   var undef = 0;
   var tempInt = 0, tempBigInt = 0, tempBigIntP = 0, tempBigIntS = 0, tempBigIntR = 0.0, tempBigIntI = 0, tempBigIntD = 0, tempValue = 0, tempDouble = 0.0;
 ''' + ''.join(['''
-  var tempRet%d = 0;''' % i for i in range(10)]) + '\n' + asm_global_funcs] + ['  var tempFloat = %s;\n' % ('Math_fround(0)' if settings.get('PRECISE_F32') else '0.0')] + ['''
+  var tempRet%d = 0;''' % i for i in range(10)]) + '\n' + asm_global_funcs] + ['  var tempFloat = %s;\n' % ('Math_fround(0)' if settings.get('PRECISE_F32') else '0.0')] + (['  const f0 = Math_fround(0);\n'] if settings.get('PRECISE_F32') else []) + ['''
 // EMSCRIPTEN_START_FUNCS
 function stackAlloc(size) {
   size = size|0;
@@ -611,26 +611,30 @@ function setThrew(threw, value) {
 }
 function copyTempFloat(ptr) {
   ptr = ptr|0;
-  HEAP8[tempDoublePtr] = HEAP8[ptr];
-  HEAP8[tempDoublePtr+1|0] = HEAP8[ptr+1|0];
-  HEAP8[tempDoublePtr+2|0] = HEAP8[ptr+2|0];
-  HEAP8[tempDoublePtr+3|0] = HEAP8[ptr+3|0];
+  HEAP8[tempDoublePtr>>0] = HEAP8[ptr>>0];
+  HEAP8[tempDoublePtr+1>>0] = HEAP8[ptr+1>>0];
+  HEAP8[tempDoublePtr+2>>0] = HEAP8[ptr+2>>0];
+  HEAP8[tempDoublePtr+3>>0] = HEAP8[ptr+3>>0];
 }
 function copyTempDouble(ptr) {
   ptr = ptr|0;
-  HEAP8[tempDoublePtr] = HEAP8[ptr];
-  HEAP8[tempDoublePtr+1|0] = HEAP8[ptr+1|0];
-  HEAP8[tempDoublePtr+2|0] = HEAP8[ptr+2|0];
-  HEAP8[tempDoublePtr+3|0] = HEAP8[ptr+3|0];
-  HEAP8[tempDoublePtr+4|0] = HEAP8[ptr+4|0];
-  HEAP8[tempDoublePtr+5|0] = HEAP8[ptr+5|0];
-  HEAP8[tempDoublePtr+6|0] = HEAP8[ptr+6|0];
-  HEAP8[tempDoublePtr+7|0] = HEAP8[ptr+7|0];
+  HEAP8[tempDoublePtr>>0] = HEAP8[ptr>>0];
+  HEAP8[tempDoublePtr+1>>0] = HEAP8[ptr+1>>0];
+  HEAP8[tempDoublePtr+2>>0] = HEAP8[ptr+2>>0];
+  HEAP8[tempDoublePtr+3>>0] = HEAP8[ptr+3>>0];
+  HEAP8[tempDoublePtr+4>>0] = HEAP8[ptr+4>>0];
+  HEAP8[tempDoublePtr+5>>0] = HEAP8[ptr+5>>0];
+  HEAP8[tempDoublePtr+6>>0] = HEAP8[ptr+6>>0];
+  HEAP8[tempDoublePtr+7>>0] = HEAP8[ptr+7>>0];
 }
 ''' + ''.join(['''
 function setTempRet%d(value) {
   value = value|0;
   tempRet%d = value;
+}
+''' % (i, i) for i in range(10)]) + ''.join(['''
+function getTempRet%d() {
+  return tempRet%d|0;
 }
 ''' % (i, i) for i in range(10)])] + [PostSets.js + '\n'] + funcs_js + ['''
   %s
@@ -644,9 +648,11 @@ function setTempRet%d(value) {
 
     if not settings.get('SIDE_MODULE'):
       funcs_js.append('''
-Runtime.stackAlloc = function(size) { return asm['stackAlloc'](size) };
-Runtime.stackSave = function() { return asm['stackSave']() };
-Runtime.stackRestore = function(top) { asm['stackRestore'](top) };
+Runtime.stackAlloc = asm['stackAlloc'];
+Runtime.stackSave = asm['stackSave'];
+Runtime.stackRestore = asm['stackRestore'];
+Runtime.setTempRet0 = asm['setTempRet0'];
+Runtime.getTempRet0 = asm['getTempRet0'];
 ''')
 
     # Set function table masks
@@ -889,10 +895,15 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
   exported_implemented_functions = set(metadata['exports'])
   export_bindings = settings['EXPORT_BINDINGS']
   export_all = settings['EXPORT_ALL']
-  for key in metadata['implementedFunctions'] + forwarded_json['Functions']['implementedFunctions'].keys(): # XXX perf
+  all_implemented = metadata['implementedFunctions'] + forwarded_json['Functions']['implementedFunctions'].keys() # XXX perf?
+  for key in all_implemented:
     if key in all_exported_functions or export_all or (export_bindings and key.startswith('_emscripten_bind')):
       exported_implemented_functions.add(key)
   implemented_functions = set(metadata['implementedFunctions'])
+  if settings['ASSERTIONS'] and settings.get('ORIGINAL_EXPORTED_FUNCTIONS'):
+    for requested in settings['ORIGINAL_EXPORTED_FUNCTIONS']:
+      if requested not in all_implemented:
+        logging.warning('function requested to be exported, but not implemented: "%s"', requested)
 
   # Add named globals
   named_globals = '\n'.join(['var %s = %s;' % (k, v) for k, v in metadata['namedGlobals'].iteritems()])
@@ -1058,7 +1069,7 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
     if '_rand' in exported_implemented_functions or '_srand' in exported_implemented_functions:
       basic_vars += ['___rand_seed']
 
-    asm_runtime_funcs = ['stackAlloc', 'stackSave', 'stackRestore', 'setThrew'] + ['setTempRet%d' % i for i in range(10)]
+    asm_runtime_funcs = ['stackAlloc', 'stackSave', 'stackRestore', 'setThrew', 'setTempRet0', 'getTempRet0']
     # function tables
     function_tables = ['dynCall_' + table for table in last_forwarded_json['Functions']['tables']]
     function_tables_impls = []
@@ -1076,8 +1087,9 @@ def emscript_fast(infile, settings, outfile, libraries=[], compiler_engine=None,
   }
 ''' % (sig, ',' if len(sig) > 1 else '', args, arg_coercions, ret))
 
+      ffi_args = ','.join([shared.JS.make_coercion('a' + str(i), sig[i], settings, ffi_arg=True) for i in range(1, len(sig))])
       for i in range(settings['RESERVED_FUNCTION_POINTERS']):
-        jsret = ('return ' if sig[0] != 'v' else '') + shared.JS.make_coercion('jsCall(%d%s%s)' % (i, ',' if coerced_args else '', coerced_args), sig[0], settings)
+        jsret = ('return ' if sig[0] != 'v' else '') + shared.JS.make_coercion('jsCall(%d%s%s)' % (i, ',' if ffi_args else '', ffi_args), sig[0], settings, ffi_result=True)
         function_tables_impls.append('''
   function jsCall_%s_%s(%s) {
     %s
@@ -1164,7 +1176,7 @@ var asm = (function(global, env, buffer) {
   var nan = +env.NaN, inf = +env.Infinity;
   var tempInt = 0, tempBigInt = 0, tempBigIntP = 0, tempBigIntS = 0, tempBigIntR = 0.0, tempBigIntI = 0, tempBigIntD = 0, tempValue = 0, tempDouble = 0.0;
 ''' + ''.join(['''
-  var tempRet%d = 0;''' % i for i in range(10)]) + '\n' + asm_global_funcs] + ['  var tempFloat = %s;\n' % ('Math_fround(0)' if settings.get('PRECISE_F32') else '0.0')] + ['''
+  var tempRet%d = 0;''' % i for i in range(10)]) + '\n' + asm_global_funcs] + ['  var tempFloat = %s;\n' % ('Math_fround(0)' if settings.get('PRECISE_F32') else '0.0')] + (['  const f0 = Math_fround(0);\n'] if settings.get('PRECISE_F32') else []) + ['''
 // EMSCRIPTEN_START_FUNCS
 function stackAlloc(size) {
   size = size|0;
@@ -1191,28 +1203,30 @@ function setThrew(threw, value) {
 }
 function copyTempFloat(ptr) {
   ptr = ptr|0;
-  HEAP8[tempDoublePtr] = HEAP8[ptr];
-  HEAP8[tempDoublePtr+1|0] = HEAP8[ptr+1|0];
-  HEAP8[tempDoublePtr+2|0] = HEAP8[ptr+2|0];
-  HEAP8[tempDoublePtr+3|0] = HEAP8[ptr+3|0];
+  HEAP8[tempDoublePtr>>0] = HEAP8[ptr>>0];
+  HEAP8[tempDoublePtr+1>>0] = HEAP8[ptr+1>>0];
+  HEAP8[tempDoublePtr+2>>0] = HEAP8[ptr+2>>0];
+  HEAP8[tempDoublePtr+3>>0] = HEAP8[ptr+3>>0];
 }
 function copyTempDouble(ptr) {
   ptr = ptr|0;
-  HEAP8[tempDoublePtr] = HEAP8[ptr];
-  HEAP8[tempDoublePtr+1|0] = HEAP8[ptr+1|0];
-  HEAP8[tempDoublePtr+2|0] = HEAP8[ptr+2|0];
-  HEAP8[tempDoublePtr+3|0] = HEAP8[ptr+3|0];
-  HEAP8[tempDoublePtr+4|0] = HEAP8[ptr+4|0];
-  HEAP8[tempDoublePtr+5|0] = HEAP8[ptr+5|0];
-  HEAP8[tempDoublePtr+6|0] = HEAP8[ptr+6|0];
-  HEAP8[tempDoublePtr+7|0] = HEAP8[ptr+7|0];
+  HEAP8[tempDoublePtr>>0] = HEAP8[ptr>>0];
+  HEAP8[tempDoublePtr+1>>0] = HEAP8[ptr+1>>0];
+  HEAP8[tempDoublePtr+2>>0] = HEAP8[ptr+2>>0];
+  HEAP8[tempDoublePtr+3>>0] = HEAP8[ptr+3>>0];
+  HEAP8[tempDoublePtr+4>>0] = HEAP8[ptr+4>>0];
+  HEAP8[tempDoublePtr+5>>0] = HEAP8[ptr+5>>0];
+  HEAP8[tempDoublePtr+6>>0] = HEAP8[ptr+6>>0];
+  HEAP8[tempDoublePtr+7>>0] = HEAP8[ptr+7>>0];
 }
-''' + ''.join(['''
-function setTempRet%d(value) {
+function setTempRet0(value) {
   value = value|0;
-  tempRet%d = value;
+  tempRet0 = value;
 }
-''' % (i, i) for i in range(10)])] + funcs_js + ['''
+function getTempRet0() {
+  return tempRet0|0;
+}
+'''] + funcs_js + ['''
   %s
 
   return %s;
@@ -1224,9 +1238,11 @@ function setTempRet%d(value) {
 
     if not settings.get('SIDE_MODULE'):
       funcs_js.append('''
-Runtime.stackAlloc = function(size) { return asm['stackAlloc'](size) };
-Runtime.stackSave = function() { return asm['stackSave']() };
-Runtime.stackRestore = function(top) { asm['stackRestore'](top) };
+Runtime.stackAlloc = asm['stackAlloc'];
+Runtime.stackSave = asm['stackSave'];
+Runtime.stackRestore = asm['stackRestore'];
+Runtime.setTempRet0 = asm['setTempRet0'];
+Runtime.getTempRet0 = asm['getTempRet0'];
 ''')
 
     # Set function table masks
