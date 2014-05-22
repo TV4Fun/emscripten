@@ -1509,7 +1509,7 @@ try:
   # First, combine the bitcode files if there are several. We must also link if we have a singleton .a
   if len(input_files) + len(extra_files_to_link) > 1 or \
      (not LEAVE_INPUTS_RAW and not (suffix(temp_files[0][1]) in BITCODE_ENDINGS or suffix(temp_files[0][1]) in DYNAMICLIB_ENDINGS) and shared.Building.is_ar(temp_files[0][1])):
-    linker_inputs = [val for _, val in sorted(temp_files + link_flags)] + extra_files_to_link
+    linker_inputs = [val for _, val in sorted(temp_files)] + extra_files_to_link
     logging.debug('linking: ' + str(linker_inputs))
     shared.Building.link(linker_inputs, in_temp(target_basename + '.bc'), force_archive_contents=len([temp for i, temp in temp_files if not temp.endswith(STATICLIB_ENDINGS)]) == 0)
     final = in_temp(target_basename + '.bc')
